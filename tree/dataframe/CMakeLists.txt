@@ -23,7 +23,7 @@ if(sqlite)
 endif()
 
 if(cuda)
-  list(APPEND RDATAFRAME_EXTRA_HEADERS ROOT/RDF/CUDAFillHelper.hxx)
+  list(APPEND RDATAFRAME_EXTRA_HEADERS ROOT/RDF/GPUFillHelper.hxx)
 endif()
 
 if(root7)
@@ -150,8 +150,12 @@ if(arrow)
 endif()
 
 if (cuda)
-  target_compile_definitions(ROOTDataFrame PRIVATE ROOT_RDF_CUDA)
   target_link_libraries(ROOTDataFrame PRIVATE CUDAHist)
+endif()
+
+if (sycl)
+  target_include_directories(ROOTDataFrame PRIVATE ${ComputeCpp_INCLUDE_DIRS})
+  target_link_libraries(ROOTDataFrame PRIVATE SYCLHist)
 endif()
 
 if(sqlite)

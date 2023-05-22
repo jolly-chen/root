@@ -31,8 +31,24 @@
 #include <TH1.h>
 #include <TROOT.h> // IsImplicitMTEnabled
 
-#ifdef ROOT_RDF_CUDA
-#include <ROOT/RDF/CUDAFillHelper.hxx>
+// Some messy forward declarations...
+// #ifdef ROOT_RDF_SYCL
+// namespace ROOT {
+// namespace Experimental {
+// template <typename, unsigned int, unsigned int = 256>class RHnSYCL;
+// }}
+// #endif
+
+// #ifdef ROOT_RDF_CUDA
+// namespace ROOT {
+// namespace Experimental {
+// template <typename, unsigned int, unsigned int = 256>class RHnCUDA;
+// }}
+// #endif
+
+#if defined(ROOT_RDF_CUDA) || defined(ROOT_RDF_SYCL)
+#include <ROOT/RDF/GPUFillHelper.hxx>
+#include <RHnGPU.h>
 #endif
 
 #include <deque>
@@ -148,25 +164,29 @@ std::unique_ptr<RActionBase>
 BuildAction(const ColumnNames_t &bl, const std::shared_ptr<ActionResultType> &h, const unsigned int nSlots,
             std::shared_ptr<PrevNodeType> prevNode, ActionTag, const RColumnRegister &colRegister)
 {
-#ifdef ROOT_RDF_CUDA
    // Avoid compilation errors for custom objects for which the dimension is unknown, like CustomFiller in
    // tree/dataframe/test/datagframe_helpers.cxx
    if constexpr (has_getxaxis_v<ActionResultType>) {
-      if (getenv("CUDA_HIST")) {
-         using Helper_t = ROOT::Experimental::Internal::RDF::CUDAFillHelper<ActionResultType>;
+#ifdef ROOT_RDF_SYCL
+      if (getenv("SYCL_HIST")) {
+         using Helper_t = ROOT::Experimental::Internal::RDF::GPUFillHelper<ROOT::Experimental::RHnSYCL, ActionResultType>;
          using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
          return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
       }
+#endif
+
+#ifdef ROOT_RDF_CUDA
+      if (getenv("CUDA_HIST")) {
+         using Helper_t = ROOT::Experimental::Internal::RDF::GPUFillHelper<ROOT::Experimental::RHnCUDA, ActionResultType>;
+         using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
+         return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
+      }
+#endif
    }
 
    using Helper_t = FillHelper<ActionResultType>;
    using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
    return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
-#else
-   using Helper_t = FillHelper<ActionResultType>;
-   using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
-   return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
-#endif
 }
 
 // Histo1D filling (must handle the special case of distinguishing FillHelper and BufferedFillHelper
@@ -177,14 +197,23 @@ BuildAction(const ColumnNames_t &bl, const std::shared_ptr<::TH1D> &h, const uns
 {
    auto hasAxisLimits = HistoUtils<::TH1D>::HasAxisLimits(*h);
 
-#ifdef ROOT_RDF_CUDA
-   if (getenv("CUDA_HIST")) {
-      using Helper_t = ROOT::Experimental::Internal::RDF::CUDAFillHelper<::TH1D>;
+#ifdef ROOT_RDF_SYCL
+   if (getenv("SYCL_HIST")) {
+      using Helper_t = ROOT::Experimental::Internal::RDF::GPUFillHelper<ROOT::Experimental::RHnSYCL, TH1D>;
       using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
       return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
-   } else
+   }
 #endif
-      if (hasAxisLimits) {
+
+#ifdef ROOT_RDF_CUDA
+   if (getenv("CUDA_HIST")) {
+      using Helper_t = ROOT::Experimental::Internal::RDF::GPUFillHelper<ROOT::Experimental::RHnCUDA, ::TH1D>;
+      using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
+      return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
+   }
+#endif
+
+   if (hasAxisLimits) {
       using Helper_t = FillHelper<::TH1D>;
       using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
       return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);

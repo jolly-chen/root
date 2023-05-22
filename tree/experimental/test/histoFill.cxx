@@ -7,10 +7,11 @@
 
 #include "ROOT/RDataFrame.hxx"
 #include "RHnCUDA.h"
+#include "RHnSYCL.h"
 #include "TH1.h"
 #include "TAxis.h"
 
-using namespace ROOT::Experimental::CUDAHist;
+using ROOT::Experimental::RHnCUDA;
 
 // Helper function for toggling ON CUDA histogramming.
 char env[] = "CUDA_HIST";

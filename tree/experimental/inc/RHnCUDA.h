@@ -7,18 +7,10 @@
 
 namespace ROOT {
 namespace Experimental {
-namespace CUDAHist {
 
-struct RAxis {
-   int fNbins;  ///< Number of bins(1D) WITH u/overflow
-   double fMin; ///< Low edge of first bin
-   double fMax; ///< Upper edge of last bin
-
-   const double *kBinEdges; ///< Bin edges array, can be NULL
-};
-
-template <typename T, unsigned int Dim, unsigned int BlockSize = 256>
+template <typename T, unsigned int Dim, unsigned int BlockSize>
 class RHnCUDA {
+public:
    // clang-format off
 private:
    T                       *fDHistogram;        ///< Pointer to histogram buffer on the GPU.
@@ -66,7 +58,6 @@ protected:
    void ExecuteCUDAHisto();
 };
 
-} // namespace CUDAHist
 } // namespace Experimental
 } // namespace ROOT
 #endif

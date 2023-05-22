@@ -1,3 +1,4 @@
+#include "RHnGPU.h"
 #include "RHnCUDA.h"
 
 #include "CUDAHelpers.cuh"
@@ -13,7 +14,6 @@
 
 namespace ROOT {
 namespace Experimental {
-namespace CUDAHist {
 ////////////////////////////////////////////////////////////////////////////////
 /// CUDA kernels
 
@@ -38,7 +38,7 @@ __device__ inline int FindFixBin(double x, const double *binEdges, int nBins, do
 
 // Use Horner's method to calculate the bin in an n-Dimensional array.
 template <unsigned int Dim>
-__device__ inline int GetBin(int i, CUDAHist::RAxis *axes, double *coords, int *bins)
+__device__ inline int GetBin(int i, RAxis *axes, double *coords, int *bins)
 {
    auto *x = &coords[i * Dim];
 
@@ -133,7 +133,7 @@ __device__ inline void AddBinContent(int *histogram, int bin, double weight)
 /// Histogram filling kernels
 
 template <typename T, unsigned int Dim>
-__global__ void HistoKernel(T *histogram, CUDAHist::RAxis *axes, int nBins, double *coords, int *bins, double *weights,
+__global__ void HistoKernel(T *histogram, RAxis *axes, int nBins, double *coords, int *bins, double *weights,
                             unsigned int bufferSize)
 {
    auto sMem = CUDAHelpers::shared_memory_proxy<T>();
@@ -164,7 +164,7 @@ __global__ void HistoKernel(T *histogram, CUDAHist::RAxis *axes, int nBins, doub
 // Slower histogramming, but requires less memory.
 // OPTIMIZATION: consider sorting the coords array.
 template <typename T, unsigned int Dim>
-__global__ void HistoKernelGlobal(T *histogram, CUDAHist::RAxis *axes, int nBins, double *coords, int *bins,
+__global__ void HistoKernelGlobal(T *histogram, RAxis *axes, int nBins, double *coords, int *bins,
                                   double *weights, unsigned int bufferSize)
 {
    unsigned int tid = threadIdx.x + blockDim.x * blockIdx.x;
@@ -235,7 +235,7 @@ __global__ void GetSumWAxisAxis(int axis1, int axis2, int is_offset, double *coo
 
 // Nullify weights of under/overflow bins to exclude them from stats
 template <unsigned int Dim, unsigned int BlockSize>
-__global__ void ExcludeUOverflowKernel(int *bins, double *weights, unsigned int nCoords, CUDAHist::RAxis *axes)
+__global__ void ExcludeUOverflowKernel(int *bins, double *weights, unsigned int nCoords, RAxis *axes)
 {
    unsigned int tid = threadIdx.x + blockDim.x * blockIdx.x;
    unsigned int stride = blockDim.x * gridDim.x;
@@ -462,6 +462,5 @@ void RHnCUDA<T, Dim, BlockSize>::RetrieveResults(T *histResult, double *statsRes
 }
 
 #include "RHnCUDA-impl.cu"
-} // namespace CUDAHist
 } // namespace Experimental
 } // namespace ROOT

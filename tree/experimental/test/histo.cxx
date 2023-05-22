@@ -7,7 +7,6 @@
 #include "gtest/gtest.h"
 
 #include "ROOT/RDataFrame.hxx"
-// #include "RHnCUDA.h"
 #include "TH1.h"
 #include "TAxis.h"
 
