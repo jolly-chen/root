@@ -1,5 +1,5 @@
-#ifndef RHnGPU_H
-#define RHnGPU_H
+#ifndef RHnAxis_H
+#define RHnAxis_H
 
 namespace ROOT {
 namespace Experimental {
@@ -11,11 +11,6 @@ struct RAxis {
    const double *kBinEdges; ///< Bin edges array, can be NULL
 };
 
-template <typename, unsigned int, unsigned int = 256>
-class RHnCUDA;
-
-template <typename, unsigned int, unsigned int = 256>
-class RHnSYCL;
 } // namespace Experimental
 } // namespace ROOT
 

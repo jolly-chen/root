@@ -3,14 +3,13 @@
 
 #include <vector>
 #include <array>
-#include <utility>
+#include "RAxis.h"
 
 namespace ROOT {
 namespace Experimental {
 
-template <typename T, unsigned int Dim, unsigned int BlockSize>
+template <typename T, unsigned int Dim, unsigned int BlockSize = 256>
 class RHnCUDA {
-public:
    // clang-format off
 private:
    T                       *fDHistogram;        ///< Pointer to histogram buffer on the GPU.

@@ -1,21 +1,21 @@
 #ifndef RHnSYCL_H
 #define RHnSYCL_H
 
-#include <vector>
-#include <CL/sycl.hpp>
+#define CL_TARGET_OPENCL_VERSION 300
 
 #include <array>
-#include <utility>
+#include <CL/sycl.hpp>
+#include "RAxis.h"
+
 
 namespace sycl = cl::sycl;
 
 namespace ROOT {
 namespace Experimental {
-template <typename T, unsigned int Dim, unsigned int BlockSize>
-class RHnSYCL {
 
+template <typename T, unsigned int Dim, unsigned int BlockSize = 256>
+class RHnSYCL {
    // clang-format off
-private:
    sycl::queue              queue;
 
    sycl::buffer<T, 1>       fHistogram;         ///< Pointer to histogram buffer on the GPU.

@@ -5,12 +5,9 @@
 # For the list of contributors see $ROOTSYS/README/CREDITS.
 
 if (sycl OR cuda)
+    ROOT_ADD_GTEST(HistoRDF histoRDF.cxx LIBRARIES CUDAHist SYCLHist Hist ROOTDataFrame)
 endif()
 
 if (cuda)
-    ROOT_ADD_GTEST(Histo histo.cxx LIBRARIES CUDAHist Hist ROOTDataFrame)
     ROOT_ADD_GTEST(HistoFill histoFill.cxx LIBRARIES CUDAHist Hist ROOTDataFrame)
-endif()
-
-if (sycl)
 endif()

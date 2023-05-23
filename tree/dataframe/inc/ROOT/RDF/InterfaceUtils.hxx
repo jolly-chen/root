@@ -32,23 +32,25 @@
 #include <TROOT.h> // IsImplicitMTEnabled
 
 // Some messy forward declarations...
-// #ifdef ROOT_RDF_SYCL
+#ifdef ROOT_RDF_SYCL
 // namespace ROOT {
 // namespace Experimental {
 // template <typename, unsigned int, unsigned int = 256>class RHnSYCL;
 // }}
-// #endif
+#include "RHnSYCL.h"
+#endif
 
-// #ifdef ROOT_RDF_CUDA
+#ifdef ROOT_RDF_CUDA
 // namespace ROOT {
 // namespace Experimental {
 // template <typename, unsigned int, unsigned int = 256>class RHnCUDA;
 // }}
-// #endif
+#include "RHnCUDA.h"
+#endif
 
 #if defined(ROOT_RDF_CUDA) || defined(ROOT_RDF_SYCL)
 #include <ROOT/RDF/GPUFillHelper.hxx>
-#include <RHnGPU.h>
+// #include <RHnGPU.h>
 #endif
 
 #include <deque>

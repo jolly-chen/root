@@ -1,19 +1,17 @@
-#include "RHnGPU.h"
 #include "RHnCUDA.h"
 
 #include "CUDAHelpers.cuh"
-#include "RtypesCore.h"
 #include "TError.h"
 #include "TMath.h"
 
 #include <thrust/functional.h>
 #include <array>
 #include <vector>
-#include <utility>
 #include <iostream>
 
 namespace ROOT {
 namespace Experimental {
+
 ////////////////////////////////////////////////////////////////////////////////
 /// CUDA kernels
 

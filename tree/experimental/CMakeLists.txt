@@ -19,7 +19,7 @@ if (cuda)
 if (sycl)
   ROOT_LINKER_LIBRARY(SYCLHist src/RHnSYCL.cxx TYPE SHARED DEPENDENCIES GenVector)
   target_compile_definitions(SYCLHist PUBLIC ROOT_RDF_SYCL)
-  list(APPEND COMPUTECPP_USER_FLAGS -no-serial-memop -DCL_TARGET_OPENCL_VERSION=300)
+  list(APPEND COMPUTECPP_USER_FLAGS -no-serial-memop)
 
   if (cuda)
   target_compile_definitions(SYCLHist PUBLIC ROOT_RDF_CUDA)

@@ -16,6 +16,8 @@ inline static void __checkCudaErrors(cudaError_t error, std::string func, std::s
    }
 }
 
+namespace ROOT {
+namespace Experimental {
 namespace CUDAHelpers {
 
 // Dynamic shared memory needs to be declared as "extern" in CUDA. Having templated kernels with shared memory
@@ -192,5 +194,6 @@ __device__ Long64_t BinarySearchCUDA(Long64_t n, const T *array, T value)
 }
 
 } // namespace CUDAHelpers
-
+} // namespace Experimental
+} // namespace ROOT
 #endif

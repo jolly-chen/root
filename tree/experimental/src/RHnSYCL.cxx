@@ -1,32 +1,28 @@
-#include "RHnGPU.h"
 #include "RHnSYCL.h"
 #include <CL/sycl.hpp>
 #include <SYCLHelpers.h>
 #include <iostream>
 #include <array>
-#include <vector>
 #include "TMath.h"
-
 
 namespace sycl = cl::sycl;
 
 namespace ROOT {
 namespace Experimental {
 
-#include "RHnSYCL-impl.cxx"
-
 class histogram_sycl;
 
 template <typename T, unsigned int Dim, unsigned int BlockSize>
 RHnSYCL<T, Dim, BlockSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<double, Dim> xlow,
                                     std::array<double, Dim> xhigh, const double **binEdges)
-   : kNStats([]() {
+
+   : queue(sycl::default_selector{}, SYCLHelpers::exception_handler),
+     kNStats([]() {
         // Sum of weights (squared) + sum of weight * bin (squared) per axis + sum of weight * binAx1 * binAx2 for
         // all axis combinations
         return Dim > 1 ? 2 + 2 * Dim + TMath::Binomial(Dim, 2) : 2 + 2 * Dim;
      }()),
-     kStatsSmemSize((BlockSize <= 32) ? 2 * BlockSize * sizeof(double) : BlockSize * sizeof(double)),
-     queue(sycl::default_selector{}, SYCLHelpers::exception_handler)
+     kStatsSmemSize((BlockSize <= 32) ? 2 * BlockSize * sizeof(double) : BlockSize * sizeof(double))
 {
    fBufferSize = 10000;
    fNbins = 1;
@@ -36,7 +32,7 @@ RHnSYCL<T, Dim, BlockSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<doub
    auto axesAcc = fAxes.template get_access<sycl::access::mode::discard_write>();
 
    // Initialize axis descriptors.
-   for (auto i = 0; i < Dim; i++) {
+   for (unsigned int i = 0; i < Dim; i++) {
       RAxis axis;
       axis.fNbins = ncells[i];
       axis.fMin = xlow[i];
@@ -136,6 +132,8 @@ void RHnSYCL<T, Dim, BlockSize>::RetrieveResults(T *histResult, double *statsRes
 
    // TODO: Free device pointers?
 }
+
+#include "RHnSYCL-impl.cxx"
 
 } // namespace Experimental
 } // namespace ROOT

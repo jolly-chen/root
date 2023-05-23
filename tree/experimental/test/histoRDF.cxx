@@ -10,17 +10,13 @@
 #include "TH1.h"
 #include "TAxis.h"
 
-// TODO: put these in some kind of gtest environment class?
-auto numRows = 42;
-auto numBins = numRows - 2; // -2 to also test filling u/overflow.
-auto startBin = 0;
-auto startFill = startBin - 1;
-auto endBin = numBins;
+int numRows = 42;
+int numBins = numRows - 2; // -2 to also test filling u/overflow.
+double startBin = 0;
+double startFill = startBin - 1;
+double endBin = numBins;
 
-ROOT::RDataFrame rdf1D(numRows);
-ROOT::RDataFrame rdf2D(numRows *numRows);
-ROOT::RDataFrame rdf3D(numRows *numRows *numRows);
-char env[] = "CUDA_HIST";
+ROOT::RDataFrame rdf1D(numRows), rdf2D(numRows *numRows), rdf3D(numRows *numRows *numRows);
 
 template <typename T = double, typename HIST = TH1D>
 struct HistProperties {
@@ -43,15 +39,22 @@ struct HistProperties {
    }
 };
 
+class HistoTestFixture : public testing::TestWithParam<const char *> {
+protected:
+   HistoTestFixture() {}
+};
+
+INSTANTIATE_TEST_SUITE_P(HistoTest, HistoTestFixture, testing::Values("CUDA_HIST", "SYCL_HIST"));
+
 /**
- * Helper functions for toggling ON/OFF CUDA histogramming.
+ * Helper functions for toggling ON/OFF GPU histogramming.
  */
-void EnableCUDA()
+void EnableGPU(const char *env)
 {
    setenv(env, "1", 1);
 }
 
-void DisableCUDA()
+void DisableGPU(const char *env)
 {
    unsetenv(env);
 }
@@ -87,20 +90,21 @@ std::vector<double> *GetVariableBinEdges()
 }
 
 // Test filling 1-dimensional histogram with doubles
-TEST(HistoTest, Fill1D)
+TEST_P(HistoTestFixture, Fill1D)
 {
    double x = startFill;
    auto d = rdf1D.Define("x", [&x]() { return x++; }).Define("w", [&x]() { return x; });
+   auto env = GetParam();
 
    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
    {
       SCOPED_TRACE("Fill 1D histograms with fixed bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       auto h1ptr = d.Histo1D(::TH1D("h1", "h1", numBins, startBin, endBin), "x");
       auto h1 = HistProperties<double>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill; // need to reset x, because the second Histo1D redefines "x" again.
       auto h2ptr = d.Histo1D(::TH1D("h2", "h2", numBins, startBin, endBin), "x");
       auto h2 = HistProperties<double>(h2ptr);
@@ -112,12 +116,12 @@ TEST(HistoTest, Fill1D)
    {
       SCOPED_TRACE("Fill 1D histograms with weighted fixed bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill;
       auto h1ptr = d.Histo1D(::TH1D("h1", "h1", numBins, startBin, endBin), "x", "w");
       auto h1 = HistProperties<double>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill; // need to reset x, because the second Histo1D redefines "x" again.
       auto h2ptr = d.Histo1D(::TH1D("h2", "h2", numBins, startBin, endBin), "x", "w");
       auto h2 = HistProperties<double>(h2ptr);
@@ -131,12 +135,12 @@ TEST(HistoTest, Fill1D)
    {
       SCOPED_TRACE("Fill 1D histograms with variable bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill;
       auto h1ptr = d.Histo1D(::TH1D("h1", "h1", numBins, edges->data()), "x");
       auto h1 = HistProperties<double>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill; // need to reset x, because the second Histo1D redefines "x" again.
       auto h2ptr = d.Histo1D(::TH1D("h2", "h2", numBins, edges->data()), "x");
       auto h2 = HistProperties<double>(h2ptr);
@@ -148,12 +152,12 @@ TEST(HistoTest, Fill1D)
    {
       SCOPED_TRACE("Fill 1D histograms with weighted variable bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill;
       auto h1ptr = d.Histo1D(::TH1D("h1", "h1", numBins, edges->data()), "x", "w");
       auto h1 = HistProperties<double>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill; // need to reset x, because the second Histo1D redefines "x" again.
       auto h2ptr = d.Histo1D(::TH1D("h2", "h2", numBins, edges->data()), "x", "w");
       auto h2 = HistProperties<double>(h2ptr);
@@ -163,10 +167,11 @@ TEST(HistoTest, Fill1D)
 }
 
 // Test filling 2-dimensional histogram with doubles
-TEST(HistoTest, Fill2D)
+TEST_P(HistoTestFixture, Fill2D)
 {
    double x = startFill, y = startFill;
    int r1 = 0, r2 = 0;
+   auto env = GetParam();
 
    // fill every cell in the histogram once, including u/overflow.
    auto fillX = [&x, &r1]() { return ++r1 % numRows == 0 ? x++ : x; };
@@ -182,11 +187,11 @@ TEST(HistoTest, Fill2D)
    {
       SCOPED_TRACE("Fill 2D histograms with fixed bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       auto h1ptr = d.Histo2D(::TH2D("h1", "h1", numBins, startBin, endBin, numBins, startBin, endBin), "x", "y");
       auto h1 = HistProperties<double, TH2D>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill, y = startFill, r1 = 0, r2 = 0; // need to reset, because the second Histo1D redefines "x" again.
       auto h2ptr = d.Histo2D(::TH2D("h2", "h2", numBins, startBin, endBin, numBins, startBin, endBin), "x", "y");
       auto h2 = HistProperties<double, TH2D>(h2ptr);
@@ -198,12 +203,12 @@ TEST(HistoTest, Fill2D)
    {
       SCOPED_TRACE("Fill 2D histograms with weighted fixed bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill, y = startFill, r1 = 0, r2 = 0;
       auto h1ptr = d.Histo2D(::TH2D("h1", "h1", numBins, startBin, endBin, numBins, startBin, endBin), "x", "y", "w");
       auto h1 = HistProperties<double, TH2D>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill, y = startFill, r1 = 0, r2 = 0;
       auto h2ptr = d.Histo2D(::TH2D("h2", "h2", numBins, startBin, endBin, numBins, startBin, endBin), "x", "y", "w");
       auto h2 = HistProperties<double, TH2D>(h2ptr);
@@ -217,12 +222,12 @@ TEST(HistoTest, Fill2D)
    {
       SCOPED_TRACE("Fill 2D histograms with variable bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill, y = startFill, r1 = 0, r2 = 0;
       auto h1ptr = d.Histo2D(::TH2D("h1", "h1", numBins, edges->data(), numBins, edges->data()), "x", "y");
       auto h1 = HistProperties<double, TH2D>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill, y = startFill, r1 = 0, r2 = 0;
       auto h2ptr = d.Histo2D(::TH2D("h2", "h2", numBins, edges->data(), numBins, edges->data()), "x", "y");
       auto h2 = HistProperties<double, TH2D>(h2ptr);
@@ -235,12 +240,12 @@ TEST(HistoTest, Fill2D)
    {
       SCOPED_TRACE("Fill 2D histograms with weighted variable bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill, y = startFill, r1 = 0, r2 = 0;
       auto h1ptr = d.Histo2D(::TH2D("h1", "h1", numBins, edges->data(), numBins, edges->data()), "x", "y", "w");
       auto h1 = HistProperties<double, TH2D>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill, y = startFill, r1 = 0, r2 = 0;
       auto h2ptr = d.Histo2D(::TH2D("h2", "h2", numBins, edges->data(), numBins, edges->data()), "x", "y", "w");
       auto h2 = HistProperties<double, TH2D>(h2ptr);
@@ -252,10 +257,11 @@ TEST(HistoTest, Fill2D)
 }
 
 // Test filling 3-dimensional histogram with doubles
-TEST(HistoTest, Fill3D)
+TEST_P(HistoTestFixture, Fill3D)
 {
    double x = startFill, y = startFill, z = startFill;
    int r1 = 0, r2 = 0, r3 = 0;
+   auto env = GetParam();
 
    // fill every cell in the histogram once, including u/overflow.
    auto fillX = [&x, &r1]() {
@@ -282,13 +288,13 @@ TEST(HistoTest, Fill3D)
    {
       SCOPED_TRACE("Fill 3D histograms with fixed bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       auto h1ptr =
          d.Histo3D(::TH3D("h1", "h1", numBins, startBin, endBin, numBins, startBin, endBin, numBins, startBin, endBin),
                    "x", "y", "z");
       auto h1 = HistProperties<double, TH3D>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
       auto h2ptr =
          d.Histo3D(::TH3D("h2", "h2", numBins, startBin, endBin, numBins, startBin, endBin, numBins, startBin, endBin),
@@ -302,14 +308,14 @@ TEST(HistoTest, Fill3D)
    {
       SCOPED_TRACE("Fill 3D histograms with weighted fixed bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
       auto h1ptr =
          d.Histo3D(::TH3D("h1", "h1", numBins, startBin, endBin, numBins, startBin, endBin, numBins, startBin, endBin),
                    "x", "y", "z", "w");
       auto h1 = HistProperties<double, TH3D>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
       auto h2ptr =
          d.Histo3D(::TH3D("h2", "h2", numBins, startBin, endBin, numBins, startBin, endBin, numBins, startBin, endBin),
@@ -325,13 +331,13 @@ TEST(HistoTest, Fill3D)
    {
       SCOPED_TRACE("Fill 3D histograms with variable bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
       auto h1ptr = d.Histo3D(::TH3D("h1", "h1", numBins, edges->data(), numBins, edges->data(), numBins, edges->data()),
                              "x", "y", "z");
       auto h1 = HistProperties<double, TH3D>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
       auto h2ptr = d.Histo3D(::TH3D("h2", "h2", numBins, edges->data(), numBins, edges->data(), numBins, edges->data()),
                              "x", "y", "z");
@@ -345,13 +351,13 @@ TEST(HistoTest, Fill3D)
    {
       SCOPED_TRACE("Fill 3D histograms with weighted variable bins");
 
-      DisableCUDA();
+      DisableGPU(env);
       x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
       auto h1ptr = d.Histo3D(::TH3D("h1", "h1", numBins, edges->data(), numBins, edges->data(), numBins, edges->data()),
                              "x", "y", "z", "w");
       auto h1 = HistProperties<double, TH3D>(h1ptr);
 
-      EnableCUDA();
+      EnableGPU(env);
       x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
       auto h2ptr = d.Histo3D(::TH3D("h2", "h2", numBins, edges->data(), numBins, edges->data(), numBins, edges->data()),
                              "x", "y", "z", "w");
