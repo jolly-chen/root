@@ -154,7 +154,6 @@ if (cuda)
 endif()
 
 if (sycl)
-  target_include_directories(ROOTDataFrame PRIVATE ${ComputeCpp_INCLUDE_DIRS})
   target_link_libraries(ROOTDataFrame PRIVATE SYCLHist)
 endif()
 

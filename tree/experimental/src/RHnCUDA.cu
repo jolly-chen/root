@@ -11,7 +11,6 @@
 
 namespace ROOT {
 namespace Experimental {
-
 ////////////////////////////////////////////////////////////////////////////////
 /// CUDA kernels
 
@@ -20,14 +19,14 @@ __device__ inline int FindFixBin(double x, const double *binEdges, int nBins, do
    int bin;
 
    // OPTIMIZATION: can this be done with less branching?
-   if (x < xMin) { // underflow
+   if (x < xMin) {           // underflow
       bin = 0;
    } else if (!(x < xMax)) { // overflow  (note the way to catch NaN)
       bin = nBins + 1;
    } else {
       if (binEdges == NULL) // fix bins
          bin = 1 + int(nBins * (x - xMin) / (xMax - xMin));
-      else // variable bin sizes
+      else                  // variable bin sizes
          bin = 1 + CUDAHelpers::BinarySearchCUDA(nBins + 1, binEdges, x);
    }
 
@@ -36,7 +35,7 @@ __device__ inline int FindFixBin(double x, const double *binEdges, int nBins, do
 
 // Use Horner's method to calculate the bin in an n-Dimensional array.
 template <unsigned int Dim>
-__device__ inline int GetBin(int i, RAxis *axes, double *coords, int *bins)
+__device__ inline int GetBin(int i, AxisDescriptor *axes, double *coords, int *bins)
 {
    auto *x = &coords[i * Dim];
 
@@ -91,23 +90,23 @@ __device__ inline void AddBinContent(short *histogram, int bin, double weight)
       assumed = old;
 
       if ((size_t)addr & 2) {
-         newVal = (assumed >> 16) + (int)weight; // extract short from upper 16 bits
-         overwrite = assumed & 0x0000ffff;       // clear upper 16 bits
+         newVal = (assumed >> 16) + (int)weight;                    // extract short from upper 16 bits
+         overwrite = assumed & 0x0000ffff;                          // clear upper 16 bits
          if (newVal > -32768 && newVal < 32768)
-            overwrite |= (newVal << 16); // Set upper 16 bits to newVal
+            overwrite |= (newVal << 16);                            // Set upper 16 bits to newVal
          else if (newVal < -32767)
-            overwrite |= 0x80010000; // Set upper 16 bits to min short (-32767)
+            overwrite |= 0x80010000;                                // Set upper 16 bits to min short (-32767)
          else
-            overwrite |= 0x7fff0000; // Set upper 16 bits to max short (32767)
+            overwrite |= 0x7fff0000;                                // Set upper 16 bits to max short (32767)
       } else {
          newVal = (((assumed & 0xffff) << 16) >> 16) + (int)weight; // extract short from lower 16 bits + sign extend
          overwrite = assumed & 0xffff0000;                          // clear lower 16 bits
          if (newVal > -32768 && newVal < 32768)
-            overwrite |= (newVal & 0xffff); // Set lower 16 bits to newVal
+            overwrite |= (newVal & 0xffff);                         // Set lower 16 bits to newVal
          else if (newVal < -32767)
-            overwrite |= 0x00008001; // Set lower 16 bits to min short (-32767)
+            overwrite |= 0x00008001;                                // Set lower 16 bits to min short (-32767)
          else
-            overwrite |= 0x00007fff; // Set lower 16 bits to max short (32767)
+            overwrite |= 0x00007fff;                                // Set lower 16 bits to max short (32767)
       }
 
       old = atomicCAS(addrInt, assumed, overwrite);
@@ -131,7 +130,7 @@ __device__ inline void AddBinContent(int *histogram, int bin, double weight)
 /// Histogram filling kernels
 
 template <typename T, unsigned int Dim>
-__global__ void HistoKernel(T *histogram, RAxis *axes, int nBins, double *coords, int *bins, double *weights,
+__global__ void HistoKernel(T *histogram, AxisDescriptor *axes, int nBins, double *coords, int *bins, double *weights,
                             unsigned int bufferSize)
 {
    auto sMem = CUDAHelpers::shared_memory_proxy<T>();
@@ -162,7 +161,7 @@ __global__ void HistoKernel(T *histogram, RAxis *axes, int nBins, double *coords
 // Slower histogramming, but requires less memory.
 // OPTIMIZATION: consider sorting the coords array.
 template <typename T, unsigned int Dim>
-__global__ void HistoKernelGlobal(T *histogram, RAxis *axes, int nBins, double *coords, int *bins,
+__global__ void HistoKernelGlobal(T *histogram, AxisDescriptor *axes, int nBins, double *coords, int *bins,
                                   double *weights, unsigned int bufferSize)
 {
    unsigned int tid = threadIdx.x + blockDim.x * blockIdx.x;
@@ -233,7 +232,7 @@ __global__ void GetSumWAxisAxis(int axis1, int axis2, int is_offset, double *coo
 
 // Nullify weights of under/overflow bins to exclude them from stats
 template <unsigned int Dim, unsigned int BlockSize>
-__global__ void ExcludeUOverflowKernel(int *bins, double *weights, unsigned int nCoords, RAxis *axes)
+__global__ void ExcludeUOverflowKernel(int *bins, double *weights, unsigned int nCoords, AxisDescriptor *axes)
 {
    unsigned int tid = threadIdx.x + blockDim.x * blockIdx.x;
    unsigned int stride = blockDim.x * gridDim.x;
@@ -272,7 +271,7 @@ RHnCUDA<T, Dim, BlockSize>::RHnCUDA(std::array<int, Dim> ncells, std::array<doub
 
    // Initialize axis descriptors.
    for (auto i = 0; i < Dim; i++) {
-      RAxis axis;
+      AxisDescriptor axis;
       axis.fNbins = ncells[i];
       axis.fMin = xlow[i];
       axis.fMax = xhigh[i];
@@ -310,8 +309,8 @@ void RHnCUDA<T, Dim, BlockSize>::AllocateBuffers()
    ERRCHECK(cudaMalloc((void **)&fDBins, Dim * fBufferSize * sizeof(int)));
 
    // Allocate axes on the GPU
-   ERRCHECK(cudaMalloc((void **)&fDAxes, fBufferSize * sizeof(RAxis)));
-   ERRCHECK(cudaMemcpy(fDAxes, fHAxes.data(), Dim * sizeof(RAxis), cudaMemcpyHostToDevice));
+   ERRCHECK(cudaMalloc((void **)&fDAxes, fBufferSize * sizeof(AxisDescriptor)));
+   ERRCHECK(cudaMemcpy(fDAxes, fHAxes.data(), Dim * sizeof(AxisDescriptor), cudaMemcpyHostToDevice));
    for (auto i = 0; i < Dim; i++) {
       // Allocate memory for BinEdges array.
       if (fHAxes[i].kBinEdges != NULL) {

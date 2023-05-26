@@ -14,20 +14,24 @@ if (cuda)
   target_compile_options(CUDAHist PRIVATE -rdc=true -lineinfo --expt-relaxed-constexpr)
   set_target_properties(CUDAHist PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
   target_compile_definitions(CUDAHist PUBLIC ROOT_RDF_CUDA)
-  endif()
+endif()
 
 if (sycl)
   ROOT_LINKER_LIBRARY(SYCLHist src/RHnSYCL.cxx TYPE SHARED DEPENDENCIES GenVector)
-  target_compile_definitions(SYCLHist PUBLIC ROOT_RDF_SYCL)
-  list(APPEND COMPUTECPP_USER_FLAGS -no-serial-memop)
+  target_compile_definitions(SYCLHist PUBLIC ROOT_RDF_SYCL CL_TARGET_OPENCL_VERSION=300)
+  target_include_directories(SYCLHist PUBLIC ${ComputeCpp_INCLUDE_DIRS})
+  list(APPEND COMPUTECPP_USER_FLAGS -sycl -no-serial-memop)
 
   if (cuda)
-  target_compile_definitions(SYCLHist PUBLIC ROOT_RDF_CUDA)
-  list(APPEND COMPUTECPP_USER_FLAGS -DCOMPUTE_CPP_BITCODE=ptx64 -sycl -sycl-target ptx64)
+    target_compile_definitions(SYCLHist PUBLIC ROOT_RDF_CUDA)
+    list(APPEND COMPUTECPP_USER_FLAGS -DCOMPUTE_CPP_BITCODE=ptx64 -sycl-target ptx64)
   endif()
 
   target_compile_options(SYCLHist PUBLIC -Wno-unused-parameter)
   add_sycl_to_target(TARGET SYCLHist SOURCES src/RHnSYCL.cxx)
 endif()
+
+
+#######################################################################
 
 ROOT_ADD_TEST_SUBDIRECTORY(test)
