@@ -1,11 +1,9 @@
 #include "RHnSYCL.h"
-#include <CL/sycl.hpp>
-#include <SYCLHelpers.h>
+#include <sycl/sycl.hpp>
 #include <iostream>
 #include <array>
 #include "TMath.h"
-
-namespace sycl = cl::sycl;
+#include "SYCLHelpers.h"
 
 namespace ROOT {
 namespace Experimental {
@@ -91,13 +89,13 @@ inline int GetBin(int i, AxisDescriptor *axes, double *coords, int *bins)
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 void RHnSYCL<T, Dim, WGroupSize>::AllocateBuffers()
 {
-   fHistogram = sycl::buffer<T, 1>(sycl::range<1>(fNbins));
-   fWeights = sycl::buffer<double, 1>(sycl::range<1>(fBufferSize));
-   fCoords = sycl::buffer<double, 1>(sycl::range<1>(Dim * fBufferSize));
-   fBins = sycl::buffer<int, 1>(sycl::range<1>(fNbins));
-   fAxes = sycl::buffer<AxisDescriptor, 1>(sycl::range<1>(Dim));
-   fStats = sycl::buffer<double, 1>(sycl::range<1>(kNStats));
-   fBinEdges = sycl::buffer<double, 1>(sycl::range<1>(Dim * fNbins));
+   fHistogram = new sycl::buffer<T, 1>(sycl::range<1>(fNbins), sycl::no_init);
+   fWeights = new sycl::buffer<double, 1>(sycl::range<1>(fBufferSize));
+   fCoords = new sycl::buffer<double, 1>(sycl::range<1>(Dim * fBufferSize));
+   fBins = new sycl::buffer<int, 1>(sycl::range<1>(fNbins));
+   fAxes = new sycl::buffer<AxisDescriptor, 1>(sycl::range<1>(Dim));
+   fStats = new sycl::buffer<double, 1>(sycl::range<1>(kNStats), sycl::no_init);
+   fBinEdges = new sycl::buffer<double, 1>(sycl::range<1>(Dim * fNbins));
 }
 
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
@@ -111,7 +109,8 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
      }()),
      kStatsSmemSize((WGroupSize <= 32) ? 2 * WGroupSize * sizeof(double) : WGroupSize * sizeof(double))
 {
-   queue = sycl::queue(sycl::cpu_selector(), SYCLHelpers::exception_handler);
+   // queue = sycl::queue(sycl::cpu_selector{}, SYCLHelpers::exception_handler);
+   queue = sycl::queue(sycl::gpu_selector{}, SYCLHelpers::exception_handler);
    auto device = queue.get_device();
    std::cout << "Running SYCLHist on " << device.template get_info<sycl::info::device::name>() << "\n";
 
@@ -121,65 +120,59 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
 
    AllocateBuffers();
 
-   // There is no memset for buffers so we use kernels to initialize to zero.
-   try {
-      queue.submit([&](sycl::handler &cgh) {
-         sycl::stream out(1024, 256, cgh);
+   {
+      sycl::host_accessor axesAcc{*fAxes, sycl::no_init};
+      // TODO: binedges
+      // sycl::host_accessor binEdgesAcc{*fBinEdges, sycl::no_init};
 
-         auto hAcc = fHistogram.template get_access<sycl::access::mode::discard_write>(cgh);
-         auto sAcc = fStats.get_access<sycl::access::mode::discard_write>(cgh);
+      // Initialize axis descriptors.
+      for (unsigned int i = 0; i < Dim; i++) {
+         AxisDescriptor axis;
+         axis.fNbins = ncells[i];
+         axis.fMin = xlow[i];
+         axis.fMax = xhigh[i];
+         axis.kBinEdges = NULL;
 
-         cgh.single_task(SYCLHelpers::PrintArray(out, sAcc, "sAcc"));
-         // cgh.single_task(SYCLHelpers::PrintArray(out, hAcc, "hAcc"));
-         // cgh.parallel_for(sycl::range<1>(fNbins), SYCLHelpers::InitializeZero(hAcc));
-         // cgh.parallel_for(sycl::range<1>(kNStats), SYCLHelpers::InitializeZero(sAcc));
-      });
-   } catch (sycl::exception const &e) {
-      std::cout << "Caught synchronous SYCL exception:\n" << e.what() << std::endl;
+         axesAcc[i] = axis;
+         fNbins *= ncells[i];
+      }
    }
 
-   // auto axesAcc = fAxes.template get_access<sycl::access::mode::discard_write>();         // Host access
-   // auto binEdgesAcc = fBinEdges.template get_access<sycl::access::mode::discard_write>(); // Host access
-
-   // // Initialize axis descriptors.
-   // for (unsigned int i = 0; i < Dim; i++) {
-   //    AxisDescriptor axis;
-   //    axis.fNbins = ncells[i];
-   //    axis.fMin = xlow[i];
-   //    axis.fMax = xhigh[i];
-   //    axis.kBinEdges = NULL;
-   //    // if (binEdges != NULL)
-
-   //    axesAcc[i] = axis;
-   //    fNbins *= ncells[i];
+   // There is no memset for buffers so we use kernels to initialize to zero.
+   // try {
+      // SYCLHelpers::PrintVar(queue, );
+   // } catch (sycl::exception const &e) {
+   //    std::cout << "Caught synchronous SYCL exception:\n" << e.what() << std::endl;
    // }
 
-   // fHistoSmemSize = fNbins * sizeof(T);
-   // auto has_local_mem = device.is_host() || (device.template get_info<sycl::info::device::local_mem_type>() !=
-   //                                           sycl::info::local_mem_type::none);
-   // fMaxSmemSize = has_local_mem ? device.template get_info<sycl::info::device::local_mem_size>() : 0;
+   fHistoSmemSize = fNbins * sizeof(T);
+   auto has_local_mem = device.is_host() || (device.template get_info<sycl::info::device::local_mem_type>() !=
+                                             sycl::info::local_mem_type::none);
+   fMaxSmemSize = has_local_mem ? device.template get_info<sycl::info::device::local_mem_size>() : 0;
 }
 
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 void RHnSYCL<T, Dim, WGroupSize>::Fill(const std::array<double, Dim> &coords, double w)
 {
    // Host accessors
+   sycl::host_accessor coordsAcc{*fCoords};
+   sycl::host_accessor weightsAcc{*fWeights};
    // auto coordsAcc = fCoords.get_access<sycl::access::mode::read_write>();
    // auto weightsAcc = fWeights.get_access<sycl::access::mode::read_write>();
 
-   // fEntries++;
-   // auto bufferIdx = fEntries % fBufferSize;
+   fEntries++;
+   auto bufferIdx = fEntries % fBufferSize;
 
-   // for (unsigned int i = 0; i < Dim; i++) {
-   //    coordsAcc[bufferIdx * Dim + i] = coords[i];
-   // }
-   // weightsAcc[bufferIdx] = w;
+   for (unsigned int i = 0; i < Dim; i++) {
+      coordsAcc[bufferIdx * Dim + i] = coords[i];
+   }
+   weightsAcc[bufferIdx] = w;
 
-   // // Only execute when a certain number of values are buffered to increase the GPU workload and decrease the
-   // // frequency of kernel launches.
-   // if (bufferIdx == fBufferSize) {
-   //    ExecuteSYCLHisto();
-   // }
+   // Only execute when a certain number of values are buffered to increase the GPU workload and decrease the
+   // frequency of kernel launches.
+   if (bufferIdx == fBufferSize) {
+      ExecuteSYCLHisto();
+   }
 }
 
 unsigned int nextPow2(unsigned int x)
@@ -201,33 +194,33 @@ void RHnSYCL<T, Dim, WGroupSize>::GetStats(unsigned int size)
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 void RHnSYCL<T, Dim, WGroupSize>::ExecuteSYCLHisto()
 {
-   // unsigned int size = fmin(fBufferSize, fEntries % fBufferSize);
-   // int numWGroups = round(size / (float)WGroupSize);
+   unsigned int size = fmin(fBufferSize, fEntries % fBufferSize);
+   int numWGroups = round(size / (float)WGroupSize);
 
    // if (fHistoSmemSize > fMaxSmemSize) {
-      // queue.submit([&](sycl::handler &cgh) {
-      //    // Get handles to SYCL buffers.
-      //    auto wAcc = fWeights.get_access<sycl::access::mode::read>(cgh);
-      //    auto cAcc = fCoords.get_access<sycl::access::mode::read>(cgh);
-      //    auto hAcc = fHistogram.template get_access<sycl::access::mode::read_write>(cgh);
+   // queue.submit([&](sycl::handler &cgh) {
+   //    // Get handles to SYCL buffers.
+   //    auto wAcc = fWeights.get_access<sycl::access::mode::read>(cgh);
+   //    auto cAcc = fCoords.get_access<sycl::access::mode::read>(cgh);
+   //    auto hAcc = fHistogram.template get_access<sycl::access::mode::read_write>(cgh);
 
-      //    // Partitions the vector pairs over available threads and computes the invariant masses.
-      //    cgh.parallel_for(sycl::range<1>(size), HistogramGlobal(hAcc, wAcc, cAcc));
-      // });
+   //    // Partitions the vector pairs over available threads and computes the invariant masses.
+   //    cgh.parallel_for(sycl::range<1>(size), HistogramGlobal(hAcc, wAcc, cAcc));
+   // });
    // } else {
-      // queue.submit([&](sycl::handler &cgh) {
-      //    // Similar to CUDA shared memory.
-      //    // auto localMemRange = sycl::range<1>(WGroupSize);
-      //    // sycl::accessor<T, 1, sycl::access::mode::read_write, sycl::access::target::local> LocalMem(localMemRange,
-      //    cgh);
+   // queue.submit([&](sycl::handler &cgh) {
+   //    // Similar to CUDA shared memory.
+   //    // auto localMemRange = sycl::range<1>(WGroupSize);
+   //    // sycl::accessor<T, 1, sycl::access::mode::read_write, sycl::access::target::local> LocalMem(localMemRange,
+   //    cgh);
 
-      //    // Get handles to SYCL buffers.
-      //    auto wAcc = fWeights.get_access<sycl::access::mode::read>(cgh);
-      //    auto cAcc = fCoords.get_access<sycl::access::mode::read>(cgh);
-      //    auto hAcc = fHistogram.template get_access<sycl::access::mode::read_write>(cgh);
+   //    // Get handles to SYCL buffers.
+   //    auto wAcc = fWeights.get_access<sycl::access::mode::read>(cgh);
+   //    auto cAcc = fCoords.get_access<sycl::access::mode::read>(cgh);
+   //    auto hAcc = fHistogram.template get_access<sycl::access::mode::read_write>(cgh);
 
-      //    cgh.parallel_for(sycl::range<1>(size), HistogramGlobal(hAcc, cAcc, wAcc));
-      // });
+   //    cgh.parallel_for(sycl::range<1>(size), HistogramGlobal(hAcc, cAcc, wAcc));
+   // });
    // } // end of scope, ensures data copied back to host
 }
 
@@ -236,18 +229,23 @@ void RHnSYCL<T, Dim, WGroupSize>::RetrieveResults(T *histResult, double *statsRe
 {
    // Fill the histogram with remaining values in the buffer.
    // auto weightsAcc = fWeights.get_access<sycl::access::mode::read>(); // Host access
-   // if (weightsAcc.get_size() > 0) {
-   //    try {
-   //       ExecuteSYCLHisto();
-   //       queue.wait_and_throw();
-   //    } catch (sycl::exception const &e) {
-   //       std::cout << "Caught synchronous SYCL exception:\n" << e.what() << std::endl;
-   //    }
-   // }
+   sycl::host_accessor weightsAcc{*fWeights};
+   if (fEntries % fBufferSize != 0) {
+      try {
+         ExecuteSYCLHisto();
+         queue.wait_and_throw();
+      } catch (sycl::exception const &e) {
+         std::cout << "Caught synchronous SYCL exception:\n" << e.what() << std::endl;
+      }
+   }
 
    // TODO: Free device pointers?
-   // queue.copy(fHistogram, histResult);
-   // queue.copy(fStats, statsResult);
+   // T* weightsPtr = weightsAcc.get_pointer();
+   // std::copy(weightsPtr.begin(), weightsPtr.end(), )
+   auto histogramAcc = fHistogram->template get_access<sycl::access::mode::read>(); // Host access
+   auto statsAcc = fStats->get_access<sycl::access::mode::read>(); // Host access
+   queue.copy(histogramAcc, histResult);
+   queue.copy(statsAcc, statsResult);
 }
 
 #include "RHnSYCL-impl.cxx"

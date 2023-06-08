@@ -7,7 +7,6 @@
 
 #include "ROOT/RDataFrame.hxx"
 #include "RHnCUDA.h"
-#include "RHnSYCL.h"
 #include "TH1.h"
 #include "TAxis.h"
 

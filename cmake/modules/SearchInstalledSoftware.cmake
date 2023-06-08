@@ -1689,36 +1689,18 @@ endif()
 
 #---Check for SYCL-----------------------------------------------------------------------
 
-set(ComputeCpp_DIR CACHE STRING "NOT-FOUND")
-
 if (sycl)
-  set(SYCL_LANGUAGE_VERSION "2020")
-  if (NOT ComputeCpp_DIR)
-    if (fail-on-missing)
-      message(FATAL_ERROR
-      "SYCL implementation root not provided, please specify "
-      "the path to the root of the chosen SYCL implementation using "
-      "ComputeCpp_DIR=<path/to/install/root>.")
+  find_package(OpenSYCL)
+  if (NOT OpenSYCL_FOUND)
+    if(fail-on-missing)
+      message(FATAL_ERROR "Open SYCL library not found")
     else()
-      message(STATUS
-      "SYCL implementation root not provided, please specify "
-      "the path to the root of the chosen SYCL implementation using "
-      "ComputeCpp_DIR=<path/to/install/root>.")
-      set(sycl OFF CACHE BOOL "Disabled because ComputeCpp SYCL is not found" FORCE)
+      message(STATUS "Open SYCL library not found")
+      set(sycl OFF CACHE BOOL "Disabled because Open SYCL is not found" FORCE)
     endif()
-  else()
-    # TODO: Getting symbol materialization errors when the version is set to 2020 instead of 2017 ://
-    find_package(ComputeCpp)
-      if (NOT ComputeCpp_FOUND)
-        if(fail-on-missing)
-          message(FATAL_ERROR "ComputeCpp SYCL library not found")
-        else()
-          message(STATUS "ComputeCpp SYCL library not found")
-          set(sycl OFF CACHE BOOL "Disabled because ComputeCpp SYCL is not found" FORCE)
-        endif()
-      endif()
   endif()
 endif()
+
 
 #---Check for CUDA-----------------------------------------------------------------------
 # if tmva-gpu is off and cuda is on cuda is searched but not used in tmva

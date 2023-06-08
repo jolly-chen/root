@@ -1,11 +1,9 @@
 #ifndef SYCL_HELPERS_H
 #define SYCL_HELPERS_H
 
-#include <CL/sycl.hpp>
+#include <sycl/sycl.hpp>
 #include "TError.h"
 #include <iostream>
-
-namespace sycl = cl::sycl;
 
 namespace ROOT {
 namespace Experimental {
@@ -23,9 +21,9 @@ auto exception_handler(sycl::exception_list exceptions)
 }
 
 template <typename Acc>
-class InitializeZero {
+class InitializeZeroTask {
 public:
-   InitializeZero(Acc _acc) : acc(_acc) {}
+   InitializeZeroTask(Acc _acc) : acc(_acc) {}
 
    void operator()(sycl::item<1> item)
    {
@@ -35,26 +33,6 @@ public:
 
 private:
    Acc acc;
-};
-
-// For debugging.
-template <typename Acc>
-class PrintArray {
-public:
-   PrintArray(sycl::stream _out, Acc _acc, const char *_name) : out(_out), acc(_acc), name(_name) {}
-
-   void operator()()
-   {
-         out << name << "\n";
-         for (auto i = 0U; i < acc.size(); i++) {
-            out << acc[i] << " ";
-         } out << "\n";
-   }
-
-private:
-   sycl::stream out;
-   Acc acc;
-   const char *name;
 };
 
 // Can't use std::lower_bound on GPU so we define it here...
@@ -87,6 +65,45 @@ long long BinarySearch(long long n, const T *array, T value)
    else
       return (pind - array - 1);
 }
+
+template <typename T>
+void InitializeZero(sycl::queue &queue, T arr, size_t n)
+{
+   queue.submit([&](sycl::handler &cgh) {
+      sycl::stream out(1024, 256, cgh);
+
+      auto acc = arr->get_access<sycl::access::mode::discard_write>(cgh);
+      cgh.parallel_for(sycl::range<1>(n), SYCLHelpers::InitializeZeroTask(acc));
+   });
+}
+
+#ifdef DEBUG
+template <class T>
+void PrintArray(sycl::queue &queue, T &arr)
+{
+   queue.submit([&](sycl::handler &cgh) {
+      sycl::stream out(1024, 256, cgh);
+      auto acc = arr->template get_access<sycl::access::mode::read>(cgh);
+      cgh.single_task([=]() {
+         for (auto i = 0U; i < 1; i++) {
+            out << acc[i] << " ";
+         }
+         out << "\n";
+      });
+   });
+   queue.wait_and_throw();
+}
+
+template <class T>
+void PrintVar(sycl::queue &queue, T &var)
+{
+   queue.submit([&](sycl::handler &cgh) {
+      sycl::stream out(1024, 256, cgh);
+      cgh.single_task([=]() { out << var << "\n"; });
+   });
+   queue.wait_and_throw();
+}
+#endif
 
 } // namespace SYCLHelpers
 } // namespace Experimental
