@@ -10,13 +10,7 @@
 #include "TH1.h"
 #include "TAxis.h"
 
-int numRows = 42;
-int numBins = numRows - 2; // -2 to also test filling u/overflow.
-double startBin = 0;
-double startFill = startBin - 1;
-double endBin = numBins;
-
-ROOT::RDataFrame rdf1D(numRows), rdf2D(numRows *numRows), rdf3D(numRows *numRows *numRows);
+const char *test_environments[] = {"CUDA_HIST"};
 
 template <typename T = double, typename HIST = TH1D>
 struct HistProperties {
@@ -25,7 +19,7 @@ struct HistProperties {
    double *stats;
    int nStats;
 
-   HistProperties(ROOT::RDF::RResultPtr<HIST> &h)
+   HistProperties(ROOT::RDF::RResultPtr<HIST> h)
    {
       dim = h->GetDimension();
       nStats = 2 + 2 * dim;
@@ -33,31 +27,188 @@ struct HistProperties {
          nStats += TMath::Binomial(dim, 2);
       stats = (double *)malloc((nStats) * sizeof(double));
 
-      array = h->GetArray();
       nCells = h->GetNcells();
+      array = new T[nCells];
+      std::copy(h->GetArray(), h->GetArray() + nCells, array);
       h->GetStats(stats);
+   }
+
+   ~HistProperties()
+   {
+      free(array);
+      free(stats);
    }
 };
 
-class HistoTestFixture : public testing::TestWithParam<const char *> {
+class HistoTestFixture1D : public testing::TestWithParam<const char *> {
 protected:
-   HistoTestFixture() {}
+   int numRows, numBins; // -2 to also test filling u/overflow.
+   double startBin, startFill, endBin;
+
+   ROOT::RDF::RInterface<ROOT::Detail::RDF::RLoopManager> *rdf;
+   const char *env;
+
+   HistoTestFixture1D()
+   {
+      numRows = 5;
+      numBins = numRows - 2; // -2 to also test filling u/overflow.
+      startBin = 0;
+      startFill = startBin - 1;
+      endBin = numBins;
+      rdf = NULL;
+      env = GetParam();
+   }
+
+   virtual void CreateRDF()
+   {
+      double x = startFill;
+      rdf = new ROOT::RDataFrame(numRows);
+      *rdf = rdf->Define("x", [&]() { return x++; }).Define("w", [&]() { return x; });
+   }
+
+   std::vector<double> *GetVariableBinEdges()
+   {
+      int e = startBin;
+      auto edges = new std::vector<double>(numBins + 1);
+      std::generate(edges->begin(), edges->end(), [&]() { return e++; });
+      (*edges)[numBins] += 10;
+
+      return edges;
+   }
+
+   template <typename Hist, typename... Cols>
+   auto GetHisto1D(Hist histMdl, Cols... cols)
+   {
+      double x = startFill;
+      auto df = ROOT::RDataFrame(numRows).Define("x", [&]() { return x++; }).Define("w", [&]() { return x; });
+      auto hptr = df.Histo1D(histMdl, cols...);
+      auto h = HistProperties<double>(hptr);
+      return h;
+   }
+
+   /**
+    * Helper functions for toggling ON/OFF GPU histogramming.
+    */
+   void EnableGPU() { setenv(env, "1", 1); }
+
+   void DisableGPU() { unsetenv(env); }
+
+   void TearDown() override { free(rdf); }
 };
 
-INSTANTIATE_TEST_SUITE_P(HistoTest, HistoTestFixture, testing::Values("CUDA_HIST", "SYCL_HIST"));
+class HistoTestFixture2D : public HistoTestFixture1D {
+protected:
+   HistoTestFixture2D() : HistoTestFixture1D() {}
 
-/**
- * Helper functions for toggling ON/OFF GPU histogramming.
- */
-void EnableGPU(const char *env)
-{
-   setenv(env, "1", 1);
-}
+   void CreateRDF() override
+   {
+      double x = startFill, y = startFill;
+      int r1 = 0, r2 = 0;
 
-void DisableGPU(const char *env)
-{
-   unsetenv(env);
-}
+      // fill every cell in the histogram once, including u/overflow.
+      auto fillX = [&]() { return ++r1 % numRows == 0 ? x++ : x; };
+      auto fillY = [&]() {
+         if (r2++ % numRows == 0)
+            y = startFill;
+         return y++;
+      };
+
+      rdf = new ROOT::RDataFrame(numRows * numRows);
+      *rdf = rdf->Define("x", fillX).Define("y", fillY).Define("w", [&]() { return x + y; });
+   }
+
+   template <typename Hist, typename... Cols>
+   auto GetHisto2D(Hist histMdl, Cols... cols)
+   {
+      double x = startFill, y = startFill;
+      int r1 = 0, r2 = 0;
+
+      // fill every cell in the histogram once, including u/overflow.
+      auto fillX = [&]() { return ++r1 % numRows == 0 ? x++ : x; };
+      auto fillY = [&]() {
+         if (r2++ % numRows == 0)
+            y = startFill;
+         return y++;
+      };
+
+      auto df =
+         ROOT::RDataFrame(numRows * numRows).Define("x", fillX).Define("y", fillY).Define("w", [&]() { return x + y; });
+      auto hptr = df.Histo2D(histMdl, cols...);
+      auto h = HistProperties<double, TH2D>(hptr);
+      return h;
+   }
+};
+
+class HistoTestFixture3D : public HistoTestFixture1D {
+protected:
+   HistoTestFixture3D() : HistoTestFixture1D() {}
+
+   void CreateRDF() override
+   {
+      double x = startFill, y = startFill, z = startFill;
+      int r1 = 0, r2 = 0, r3 = 0;
+
+      // fill every cell in the histogram once, including u/overflow.
+      auto fillX = [&]() {
+         if (++r1 % (numRows * numRows) == 0)
+            return x++;
+         return x;
+      };
+      auto fillY = [&]() {
+         if (r2 % (numRows * numRows) == 0)
+            y = startFill;
+         return ++r2 % numRows == 0 ? y++ : y;
+      };
+
+      auto fillZ = [&]() {
+         if (r3++ % numRows == 0)
+            z = startFill;
+         return z++;
+      };
+
+      rdf = new ROOT::RDataFrame(numRows * numRows * numRows);
+      *rdf = rdf->Define("x", fillX).Define("y", fillY).Define("z", fillZ);
+      *rdf = rdf->Define("w", [&]() { return x + y + z; });
+   }
+
+   template <typename Hist, typename... Cols>
+   auto GetHisto3D(Hist histMdl, Cols... cols)
+   {
+      double x = startFill, y = startFill, z = startFill;
+      int r1 = 0, r2 = 0, r3 = 0;
+
+      // fill every cell in the histogram once, including u/overflow.
+      auto fillX = [&]() {
+         if (++r1 % (numRows * numRows) == 0)
+            return x++;
+         return x;
+      };
+      auto fillY = [&]() {
+         if (r2 % (numRows * numRows) == 0)
+            y = startFill;
+         return ++r2 % numRows == 0 ? y++ : y;
+      };
+
+      auto fillZ = [&]() {
+         if (r3++ % numRows == 0)
+            z = startFill;
+         return z++;
+      };
+
+      auto df = ROOT::RDataFrame(numRows * numRows * numRows)
+                   .Define("x", fillX)
+                   .Define("y", fillY)
+                   .Define("z", fillZ)
+                   .Define("w", [&]() { return x + y + z; });
+      auto hptr = df.Histo3D(histMdl, cols...);
+      auto h = HistProperties<double, TH3D>(hptr);
+      return h;
+   }
+};
+
+INSTANTIATE_TEST_SUITE_P(HistoTest1D, HistoTestFixture1D, testing::ValuesIn(test_environments));
+INSTANTIATE_TEST_SUITE_P(HistoTest2D, HistoTestFixture2D, testing::ValuesIn(test_environments));
+INSTANTIATE_TEST_SUITE_P(HistoTest3D, HistoTestFixture3D, testing::ValuesIn(test_environments));
 
 /**
  * Helper functions for element-wise comparison of histogram arrays and bin edges->
@@ -73,298 +224,194 @@ void DisableGPU(const char *env)
    }
 
 template <typename T = double, typename HIST = TH1D>
-void CompareHistograms(const HistProperties<T, HIST> &TH, const HistProperties<T, HIST> &CUDA)
+void CompareHistograms(const HistProperties<T, HIST> &TH, const HistProperties<T, HIST> &GPU)
 {
-   CHECK_ARRAY(TH.array, CUDA.array, TH.nCells, CUDA.nCells); // Compare bin values.
-   CHECK_ARRAY(TH.stats, CUDA.stats, TH.nStats, CUDA.nStats); // Compare histogram statistics
+   CHECK_ARRAY(TH.array, GPU.array, TH.nCells, GPU.nCells); // Compare bin values.
+   CHECK_ARRAY(TH.stats, GPU.stats, TH.nStats, GPU.nStats); // Compare histogram statistics
 }
 
-std::vector<double> *GetVariableBinEdges()
-{
-   int e = startBin;
-   auto edges = new std::vector<double>(numBins + 1);
-   std::generate(edges->begin(), edges->end(), [&]() { return e++; });
-   (*edges)[numBins] += 10;
+/***
+ * Test 1D Histograms
+ */
 
-   return edges;
+TEST_P(HistoTestFixture1D, Fill1DFixedBins)
+{
+   auto mdl = ::TH1D("h", "h", this->numBins, this->startBin, this->endBin);
+
+   DisableGPU();
+   auto h1 = GetHisto1D(mdl, "x");
+
+   EnableGPU();
+   auto h2 = GetHisto1D(mdl, "x");
+
+   CompareHistograms(h1, h2);
 }
 
-// Test filling 1-dimensional histogram with doubles
-TEST_P(HistoTestFixture, Fill1D)
+TEST_P(HistoTestFixture1D, Fill1DWeightedFixedBins)
 {
-   double x = startFill;
-   auto d = rdf1D.Define("x", [&x]() { return x++; }).Define("w", [&x]() { return x; });
-   auto env = GetParam();
+   auto mdl = ::TH1D("h", "h", this->numBins, this->startBin, this->endBin);
 
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   {
-      SCOPED_TRACE("Fill 1D histograms with fixed bins");
+   DisableGPU();
+   auto h1 = GetHisto1D(mdl, "x", "w");
 
-      DisableGPU(env);
-      auto h1ptr = d.Histo1D(::TH1D("h1", "h1", numBins, startBin, endBin), "x");
-      auto h1 = HistProperties<double>(h1ptr);
+   EnableGPU();
+   auto h2 = GetHisto1D(mdl, "x", "w");
 
-      EnableGPU(env);
-      x = startFill; // need to reset x, because the second Histo1D redefines "x" again.
-      auto h2ptr = d.Histo1D(::TH1D("h2", "h2", numBins, startBin, endBin), "x");
-      auto h2 = HistProperties<double>(h2ptr);
+   CompareHistograms(h1, h2);
+}
 
-      CompareHistograms(h1, h2);
-   }
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   {
-      SCOPED_TRACE("Fill 1D histograms with weighted fixed bins");
-
-      DisableGPU(env);
-      x = startFill;
-      auto h1ptr = d.Histo1D(::TH1D("h1", "h1", numBins, startBin, endBin), "x", "w");
-      auto h1 = HistProperties<double>(h1ptr);
-
-      EnableGPU(env);
-      x = startFill; // need to reset x, because the second Histo1D redefines "x" again.
-      auto h2ptr = d.Histo1D(::TH1D("h2", "h2", numBins, startBin, endBin), "x", "w");
-      auto h2 = HistProperties<double>(h2ptr);
-
-      CompareHistograms(h1, h2);
-   }
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+TEST_P(HistoTestFixture1D, Fill1DVariableBins)
+{
    auto edges = GetVariableBinEdges();
+   auto mdl = ::TH1D("h", "h", this->numBins, edges->data());
 
-   {
-      SCOPED_TRACE("Fill 1D histograms with variable bins");
+   DisableGPU();
+   auto h1 = GetHisto1D(mdl, "x");
 
-      DisableGPU(env);
-      x = startFill;
-      auto h1ptr = d.Histo1D(::TH1D("h1", "h1", numBins, edges->data()), "x");
-      auto h1 = HistProperties<double>(h1ptr);
+   EnableGPU();
+   auto h2 = GetHisto1D(mdl, "x");
 
-      EnableGPU(env);
-      x = startFill; // need to reset x, because the second Histo1D redefines "x" again.
-      auto h2ptr = d.Histo1D(::TH1D("h2", "h2", numBins, edges->data()), "x");
-      auto h2 = HistProperties<double>(h2ptr);
-
-      CompareHistograms<double>(h1, h2);
-   }
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   {
-      SCOPED_TRACE("Fill 1D histograms with weighted variable bins");
-
-      DisableGPU(env);
-      x = startFill;
-      auto h1ptr = d.Histo1D(::TH1D("h1", "h1", numBins, edges->data()), "x", "w");
-      auto h1 = HistProperties<double>(h1ptr);
-
-      EnableGPU(env);
-      x = startFill; // need to reset x, because the second Histo1D redefines "x" again.
-      auto h2ptr = d.Histo1D(::TH1D("h2", "h2", numBins, edges->data()), "x", "w");
-      auto h2 = HistProperties<double>(h2ptr);
-
-      CompareHistograms<double>(h1, h2);
-   }
-}
-
-// Test filling 2-dimensional histogram with doubles
-TEST_P(HistoTestFixture, Fill2D)
-{
-   double x = startFill, y = startFill;
-   int r1 = 0, r2 = 0;
-   auto env = GetParam();
-
-   // fill every cell in the histogram once, including u/overflow.
-   auto fillX = [&x, &r1]() { return ++r1 % numRows == 0 ? x++ : x; };
-   auto fillY = [&y, &r2]() {
-      if (r2++ % numRows == 0)
-         y = startFill;
-      return y++;
-   };
-
-   auto d = rdf2D.Define("x", fillX).Define("y", fillY).Define("w", [&x, &y]() { return x + y; });
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   {
-      SCOPED_TRACE("Fill 2D histograms with fixed bins");
-
-      DisableGPU(env);
-      auto h1ptr = d.Histo2D(::TH2D("h1", "h1", numBins, startBin, endBin, numBins, startBin, endBin), "x", "y");
-      auto h1 = HistProperties<double, TH2D>(h1ptr);
-
-      EnableGPU(env);
-      x = startFill, y = startFill, r1 = 0, r2 = 0; // need to reset, because the second Histo1D redefines "x" again.
-      auto h2ptr = d.Histo2D(::TH2D("h2", "h2", numBins, startBin, endBin, numBins, startBin, endBin), "x", "y");
-      auto h2 = HistProperties<double, TH2D>(h2ptr);
-
-      CompareHistograms<double, TH2D>(h1, h2);
-   }
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   {
-      SCOPED_TRACE("Fill 2D histograms with weighted fixed bins");
-
-      DisableGPU(env);
-      x = startFill, y = startFill, r1 = 0, r2 = 0;
-      auto h1ptr = d.Histo2D(::TH2D("h1", "h1", numBins, startBin, endBin, numBins, startBin, endBin), "x", "y", "w");
-      auto h1 = HistProperties<double, TH2D>(h1ptr);
-
-      EnableGPU(env);
-      x = startFill, y = startFill, r1 = 0, r2 = 0;
-      auto h2ptr = d.Histo2D(::TH2D("h2", "h2", numBins, startBin, endBin, numBins, startBin, endBin), "x", "y", "w");
-      auto h2 = HistProperties<double, TH2D>(h2ptr);
-
-      CompareHistograms<double, TH2D>(h1, h2);
-   }
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   auto edges = GetVariableBinEdges();
-
-   {
-      SCOPED_TRACE("Fill 2D histograms with variable bins");
-
-      DisableGPU(env);
-      x = startFill, y = startFill, r1 = 0, r2 = 0;
-      auto h1ptr = d.Histo2D(::TH2D("h1", "h1", numBins, edges->data(), numBins, edges->data()), "x", "y");
-      auto h1 = HistProperties<double, TH2D>(h1ptr);
-
-      EnableGPU(env);
-      x = startFill, y = startFill, r1 = 0, r2 = 0;
-      auto h2ptr = d.Histo2D(::TH2D("h2", "h2", numBins, edges->data(), numBins, edges->data()), "x", "y");
-      auto h2 = HistProperties<double, TH2D>(h2ptr);
-
-      CompareHistograms<double, TH2D>(h1, h2);
-   }
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-   {
-      SCOPED_TRACE("Fill 2D histograms with weighted variable bins");
-
-      DisableGPU(env);
-      x = startFill, y = startFill, r1 = 0, r2 = 0;
-      auto h1ptr = d.Histo2D(::TH2D("h1", "h1", numBins, edges->data(), numBins, edges->data()), "x", "y", "w");
-      auto h1 = HistProperties<double, TH2D>(h1ptr);
-
-      EnableGPU(env);
-      x = startFill, y = startFill, r1 = 0, r2 = 0;
-      auto h2ptr = d.Histo2D(::TH2D("h2", "h2", numBins, edges->data(), numBins, edges->data()), "x", "y", "w");
-      auto h2 = HistProperties<double, TH2D>(h2ptr);
-
-      CompareHistograms<double, TH2D>(h1, h2);
-   }
-
+   CompareHistograms<double>(h1, h2);
    delete edges;
 }
 
-// Test filling 3-dimensional histogram with doubles
-TEST_P(HistoTestFixture, Fill3D)
+TEST_P(HistoTestFixture1D, Fill1DWeightedVariableBins)
 {
-   double x = startFill, y = startFill, z = startFill;
-   int r1 = 0, r2 = 0, r3 = 0;
-   auto env = GetParam();
-
-   // fill every cell in the histogram once, including u/overflow.
-   auto fillX = [&x, &r1]() {
-      if (++r1 % (numRows * numRows) == 0)
-         return x++;
-      return x;
-   };
-   auto fillY = [&y, &r2]() {
-      if (r2 % (numRows * numRows) == 0)
-         y = startFill;
-      return ++r2 % numRows == 0 ? y++ : y;
-   };
-
-   auto fillZ = [&z, &r3]() {
-      if (r3++ % numRows == 0)
-         z = startFill;
-      return z++;
-   };
-
-   auto d =
-      rdf3D.Define("x", fillX).Define("y", fillY).Define("z", fillZ).Define("w", [&x, &y, &z]() { return x + y + z; });
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   {
-      SCOPED_TRACE("Fill 3D histograms with fixed bins");
-
-      DisableGPU(env);
-      auto h1ptr =
-         d.Histo3D(::TH3D("h1", "h1", numBins, startBin, endBin, numBins, startBin, endBin, numBins, startBin, endBin),
-                   "x", "y", "z");
-      auto h1 = HistProperties<double, TH3D>(h1ptr);
-
-      EnableGPU(env);
-      x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
-      auto h2ptr =
-         d.Histo3D(::TH3D("h2", "h2", numBins, startBin, endBin, numBins, startBin, endBin, numBins, startBin, endBin),
-                   "x", "y", "z");
-      auto h2 = HistProperties<double, TH3D>(h2ptr);
-
-      CompareHistograms<double, TH3D>(h1, h2);
-   }
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   {
-      SCOPED_TRACE("Fill 3D histograms with weighted fixed bins");
-
-      DisableGPU(env);
-      x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
-      auto h1ptr =
-         d.Histo3D(::TH3D("h1", "h1", numBins, startBin, endBin, numBins, startBin, endBin, numBins, startBin, endBin),
-                   "x", "y", "z", "w");
-      auto h1 = HistProperties<double, TH3D>(h1ptr);
-
-      EnableGPU(env);
-      x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
-      auto h2ptr =
-         d.Histo3D(::TH3D("h2", "h2", numBins, startBin, endBin, numBins, startBin, endBin, numBins, startBin, endBin),
-                   "x", "y", "z", "w");
-      auto h2 = HistProperties<double, TH3D>(h2ptr);
-
-      CompareHistograms<double, TH3D>(h1, h2);
-   }
-
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
    auto edges = GetVariableBinEdges();
+   auto mdl = ::TH1D("h", "h", this->numBins, edges->data());
 
-   {
-      SCOPED_TRACE("Fill 3D histograms with variable bins");
+   DisableGPU();
+   auto h1 = GetHisto1D(mdl, "x", "w");
 
-      DisableGPU(env);
-      x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
-      auto h1ptr = d.Histo3D(::TH3D("h1", "h1", numBins, edges->data(), numBins, edges->data(), numBins, edges->data()),
-                             "x", "y", "z");
-      auto h1 = HistProperties<double, TH3D>(h1ptr);
+   EnableGPU();
+   auto h2 = GetHisto1D(mdl, "x", "w");
 
-      EnableGPU(env);
-      x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
-      auto h2ptr = d.Histo3D(::TH3D("h2", "h2", numBins, edges->data(), numBins, edges->data(), numBins, edges->data()),
-                             "x", "y", "z");
-      auto h2 = HistProperties<double, TH3D>(h2ptr);
+   CompareHistograms<double>(h1, h2);
+   delete edges;
+}
 
-      CompareHistograms<double, TH3D>(h1, h2);
-   }
+/***
+ * Test 2D Histograms
+ */
 
-   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+TEST_P(HistoTestFixture2D, Fill2DFixedBins)
+{
+   auto mdl =
+      ::TH2D("h", "h", this->numBins, this->startBin, this->endBin, this->numBins, this->startBin, this->endBin);
 
-   {
-      SCOPED_TRACE("Fill 3D histograms with weighted variable bins");
+   DisableGPU();
+   auto h1 = GetHisto2D(mdl, "x", "y");
 
-      DisableGPU(env);
-      x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
-      auto h1ptr = d.Histo3D(::TH3D("h1", "h1", numBins, edges->data(), numBins, edges->data(), numBins, edges->data()),
-                             "x", "y", "z", "w");
-      auto h1 = HistProperties<double, TH3D>(h1ptr);
+   EnableGPU();
+   auto h2 = GetHisto2D(mdl, "x", "y");
 
-      EnableGPU(env);
-      x = startFill, y = startFill, z = startFill, r1 = 0, r2 = 0, r3 = 0;
-      auto h2ptr = d.Histo3D(::TH3D("h2", "h2", numBins, edges->data(), numBins, edges->data(), numBins, edges->data()),
-                             "x", "y", "z", "w");
-      auto h2 = HistProperties<double, TH3D>(h2ptr);
+   CompareHistograms<double, TH2D>(h1, h2);
+}
 
-      CompareHistograms<double, TH3D>(h1, h2);
-   }
+TEST_P(HistoTestFixture2D, Fill2DWeightedFixedBins)
+{
+   auto mdl =
+      ::TH2D("h", "h", this->numBins, this->startBin, this->endBin, this->numBins, this->startBin, this->endBin);
 
+   DisableGPU();
+   auto h1 = GetHisto2D(mdl, "x", "y", "w");
+
+   EnableGPU();
+   auto h2 = GetHisto2D(mdl, "x", "y", "w");
+
+   CompareHistograms<double, TH2D>(h1, h2);
+}
+
+TEST_P(HistoTestFixture2D, Fill2DVariableBins)
+{
+   auto edges = GetVariableBinEdges();
+   auto mdl = ::TH2D("h", "h", this->numBins, edges->data(), this->numBins, edges->data());
+
+   DisableGPU();
+   auto h1 = GetHisto2D(mdl, "x", "y");
+
+   EnableGPU();
+   auto h2 = GetHisto2D(mdl, "x", "y");
+
+   CompareHistograms<double, TH2D>(h1, h2);
+   delete edges;
+}
+
+TEST_P(HistoTestFixture2D, Fill2DWeightedVariableBins)
+{
+   auto edges = GetVariableBinEdges();
+   auto mdl = ::TH2D("h", "h", this->numBins, edges->data(), this->numBins, edges->data());
+
+   DisableGPU();
+   auto h1 = GetHisto2D(mdl, "x", "y", "w");
+
+   EnableGPU();
+   auto h2 = GetHisto2D(mdl, "x", "y", "w");
+
+   CompareHistograms<double, TH2D>(h1, h2);
+   delete edges;
+}
+
+/***
+ * Test 3D Histograms
+ */
+
+TEST_P(HistoTestFixture3D, Fill3DFixedBins)
+{
+   auto mdl = ::TH3D("h", "h", this->numBins, this->startBin, this->endBin, this->numBins, this->startBin, this->endBin,
+                     this->numBins, this->startBin, this->endBin);
+
+   DisableGPU();
+   auto h1 = GetHisto3D(mdl, "x", "y", "z");
+
+   EnableGPU();
+   auto h2 = GetHisto3D(mdl, "x", "y", "z");
+
+   CompareHistograms<double, TH3D>(h1, h2);
+}
+
+TEST_P(HistoTestFixture3D, Fill3DWeightedFixedBins)
+{
+   auto mdl = ::TH3D("h", "h", this->numBins, this->startBin, this->endBin, this->numBins, this->startBin, this->endBin,
+                     this->numBins, this->startBin, this->endBin);
+
+   DisableGPU();
+   auto h1 = GetHisto3D(mdl, "x", "y", "z", "w");
+
+   EnableGPU();
+   auto h2 = GetHisto3D(mdl, "x", "y", "z", "w");
+
+   CompareHistograms<double, TH3D>(h1, h2);
+}
+
+TEST_P(HistoTestFixture3D, Fill3DVariableBins)
+{
+   auto edges = GetVariableBinEdges();
+   auto mdl =
+      ::TH3D("h", "h", this->numBins, edges->data(), this->numBins, edges->data(), this->numBins, edges->data());
+
+   DisableGPU();
+   auto h1 = GetHisto3D(mdl, "x", "y", "z");
+
+   EnableGPU();
+   auto h2 = GetHisto3D(mdl, "x", "y", "z");
+
+   CompareHistograms<double, TH3D>(h1, h2);
+   delete edges;
+}
+
+TEST_P(HistoTestFixture3D, Fill3DWeightedVariableBins)
+{
+   auto edges = GetVariableBinEdges();
+   auto mdl =
+      ::TH3D("h", "h", this->numBins, edges->data(), this->numBins, edges->data(), this->numBins, edges->data());
+
+   DisableGPU();
+   auto h1 = GetHisto3D(mdl, "x", "y", "z", "w");
+
+   EnableGPU();
+   auto h2 = GetHisto3D(mdl, "x", "y", "z", "w");
+
+   CompareHistograms<double, TH3D>(h1, h2);
    delete edges;
 }
