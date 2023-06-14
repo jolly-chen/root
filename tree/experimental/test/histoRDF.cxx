@@ -10,7 +10,7 @@
 #include "TH1.h"
 #include "TAxis.h"
 
-const char *test_environments[] = {"CUDA_HIST"};
+const char *test_environments[] = {"CUDA_HIST", "SYCL_HIST"};
 
 template <typename T = double, typename HIST = TH1D>
 struct HistProperties {
@@ -25,11 +25,13 @@ struct HistProperties {
       nStats = 2 + 2 * dim;
       if (dim > 1)
          nStats += TMath::Binomial(dim, 2);
-      stats = (double *)malloc((nStats) * sizeof(double));
-
       nCells = h->GetNcells();
+
+      // Create a copy in case the array gets cleaned up by RDataframe before checking the results
       array = new T[nCells];
       std::copy(h->GetArray(), h->GetArray() + nCells, array);
+
+      stats = (double *)malloc((nStats) * sizeof(double));
       h->GetStats(stats);
    }
 
@@ -45,7 +47,6 @@ protected:
    int numRows, numBins; // -2 to also test filling u/overflow.
    double startBin, startFill, endBin;
 
-   ROOT::RDF::RInterface<ROOT::Detail::RDF::RLoopManager> *rdf;
    const char *env;
 
    HistoTestFixture1D()
@@ -55,15 +56,7 @@ protected:
       startBin = 0;
       startFill = startBin - 1;
       endBin = numBins;
-      rdf = NULL;
       env = GetParam();
-   }
-
-   virtual void CreateRDF()
-   {
-      double x = startFill;
-      rdf = new ROOT::RDataFrame(numRows);
-      *rdf = rdf->Define("x", [&]() { return x++; }).Define("w", [&]() { return x; });
    }
 
    std::vector<double> *GetVariableBinEdges()
@@ -92,30 +85,11 @@ protected:
    void EnableGPU() { setenv(env, "1", 1); }
 
    void DisableGPU() { unsetenv(env); }
-
-   void TearDown() override { free(rdf); }
 };
 
 class HistoTestFixture2D : public HistoTestFixture1D {
 protected:
    HistoTestFixture2D() : HistoTestFixture1D() {}
-
-   void CreateRDF() override
-   {
-      double x = startFill, y = startFill;
-      int r1 = 0, r2 = 0;
-
-      // fill every cell in the histogram once, including u/overflow.
-      auto fillX = [&]() { return ++r1 % numRows == 0 ? x++ : x; };
-      auto fillY = [&]() {
-         if (r2++ % numRows == 0)
-            y = startFill;
-         return y++;
-      };
-
-      rdf = new ROOT::RDataFrame(numRows * numRows);
-      *rdf = rdf->Define("x", fillX).Define("y", fillY).Define("w", [&]() { return x + y; });
-   }
 
    template <typename Hist, typename... Cols>
    auto GetHisto2D(Hist histMdl, Cols... cols)
@@ -142,34 +116,6 @@ protected:
 class HistoTestFixture3D : public HistoTestFixture1D {
 protected:
    HistoTestFixture3D() : HistoTestFixture1D() {}
-
-   void CreateRDF() override
-   {
-      double x = startFill, y = startFill, z = startFill;
-      int r1 = 0, r2 = 0, r3 = 0;
-
-      // fill every cell in the histogram once, including u/overflow.
-      auto fillX = [&]() {
-         if (++r1 % (numRows * numRows) == 0)
-            return x++;
-         return x;
-      };
-      auto fillY = [&]() {
-         if (r2 % (numRows * numRows) == 0)
-            y = startFill;
-         return ++r2 % numRows == 0 ? y++ : y;
-      };
-
-      auto fillZ = [&]() {
-         if (r3++ % numRows == 0)
-            z = startFill;
-         return z++;
-      };
-
-      rdf = new ROOT::RDataFrame(numRows * numRows * numRows);
-      *rdf = rdf->Define("x", fillX).Define("y", fillY).Define("z", fillZ);
-      *rdf = rdf->Define("w", [&]() { return x + y + z; });
-   }
 
    template <typename Hist, typename... Cols>
    auto GetHisto3D(Hist histMdl, Cols... cols)

@@ -9,6 +9,18 @@ namespace ROOT {
 namespace Experimental {
 namespace SYCLHelpers {
 
+#define ERRCHECK(code)                                    \
+   {                                                      \
+      try {                                               \
+         code;                                            \
+         queue.wait_and_throw();                          \
+      } catch (sycl::exception const &e) {                \
+         std::cout << "Caught synchronous SYCL exception" \
+                   << " :" << __LINE__ << ":\n"           \
+                   << e.what() << std::endl;              \
+      }                                                   \
+   }
+
 auto exception_handler(sycl::exception_list exceptions)
 {
    for (std::exception_ptr const &e_ptr : exceptions) {
@@ -25,7 +37,7 @@ class InitializeZeroTask {
 public:
    InitializeZeroTask(Acc _acc) : acc(_acc) {}
 
-   void operator()(sycl::item<1> item)
+   void operator()(sycl::item<1> item) const
    {
       size_t id = item.get_linear_id();
       acc[id] = 0;
@@ -36,21 +48,24 @@ private:
 };
 
 // Can't use std::lower_bound on GPU so we define it here...
-template <typename T>
-const T *lower_bound(const T *first, const T *last, T val)
+template <class ForwardIt, class T>
+const T *lower_bound(ForwardIt first, ForwardIt last, const T &val)
 {
-   size_t len = last - first;
+   ForwardIt it;
+   int step;
+   int count = last - first;
 
-   while (len > 0) {
-      auto half = len >> 1;
-      auto middle = first + half;
+   while (count > 0) {
+      it = first;
+      step = count / 2;
+      it += step;
 
-      if (*middle < val) {
-         first = middle;
-         ++first;
-         len -= half - 1;
-      } else
-         len = half;
+      if (*it < val) {
+         first = ++it;
+         count -= step + 1;
+      } else {
+         count = step;
+      }
    }
    return first;
 }
@@ -70,40 +85,45 @@ template <typename T>
 void InitializeZero(sycl::queue &queue, T arr, size_t n)
 {
    queue.submit([&](sycl::handler &cgh) {
-      sycl::stream out(1024, 256, cgh);
-
-      auto acc = arr->get_access<sycl::access::mode::discard_write>(cgh);
+      sycl::accessor acc{arr, cgh, sycl::write_only, sycl::no_init};
       cgh.parallel_for(sycl::range<1>(n), SYCLHelpers::InitializeZeroTask(acc));
    });
 }
 
-#ifdef DEBUG
+// For debugging...
 template <class T>
-void PrintArray(sycl::queue &queue, T &arr)
+void PrintArray(sycl::queue &queue, T arr, size_t n)
 {
-   queue.submit([&](sycl::handler &cgh) {
-      sycl::stream out(1024, 256, cgh);
-      auto acc = arr->template get_access<sycl::access::mode::read>(cgh);
-      cgh.single_task([=]() {
-         for (auto i = 0U; i < 1; i++) {
-            out << acc[i] << " ";
-         }
-         out << "\n";
+   try {
+      queue.submit([&](sycl::handler &cgh) {
+         sycl::stream out(1024, 256, cgh);
+         auto acc = arr->template get_access<sycl::access::mode::read>(cgh);
+         cgh.single_task([=]() {
+            for (auto i = 0U; i < n; i++) {
+               out << acc[i] << " ";
+            }
+            out << "\n";
+         });
       });
-   });
-   queue.wait_and_throw();
+      queue.wait_and_throw();
+   } catch (sycl::exception const &e) {
+      std::cout << "Caught synchronous SYCL exception:\n" << e.what() << std::endl;
+   }
 }
 
 template <class T>
 void PrintVar(sycl::queue &queue, T &var)
 {
-   queue.submit([&](sycl::handler &cgh) {
-      sycl::stream out(1024, 256, cgh);
-      cgh.single_task([=]() { out << var << "\n"; });
-   });
-   queue.wait_and_throw();
+   try {
+      queue.submit([&](sycl::handler &cgh) {
+         sycl::stream out(1024, 256, cgh);
+         cgh.single_task([=]() { out << var << "\n"; });
+      });
+      queue.wait_and_throw();
+   } catch (sycl::exception const &e) {
+      std::cout << "Caught synchronous SYCL exception:\n" << e.what() << std::endl;
+   }
 }
-#endif
 
 } // namespace SYCLHelpers
 } // namespace Experimental

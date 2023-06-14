@@ -11,6 +11,8 @@ struct AxisDescriptor {
    double fMax; ///< Upper edge of last bin
 
    const double *kBinEdges; ///< Bin edges array, NULL when using fixed bins.
+
+   int binEdgesIdx;
 };
 
 } // namespace Experimental

@@ -24,10 +24,11 @@ __device__ inline int FindFixBin(double x, const double *binEdges, int nBins, do
    } else if (!(x < xMax)) { // overflow  (note the way to catch NaN)
       bin = nBins + 1;
    } else {
-      if (binEdges == NULL) // fix bins
+      if (binEdges == NULL) { // fix bins
          bin = 1 + int(nBins * (x - xMin) / (xMax - xMin));
-      else                  // variable bin sizes
-         bin = 1 + CUDAHelpers::BinarySearchCUDA(nBins + 1, binEdges, x);
+      } else {                // variable bin sizes
+         bin = 1 + CUDAHelpers::BinarySearch(nBins + 1, binEdges, x);
+      }
    }
 
    return bin;
@@ -438,6 +439,16 @@ void RHnCUDA<T, Dim, BlockSize>::ExecuteCUDAHisto()
    ERRCHECK(cudaPeekAtLastError());
 
    GetStats(size);
+
+   // printf("weights:\n");
+   // for (int i = 0; i < size; i++) {
+   //     printf("%f ", fHWeights[i]);
+   // } printf("\n");
+
+   // printf("coords:\n");
+   // for (int i = 0; i < size; i++) {
+   //     printf("%f ", fHCoords[i]);
+   // } printf("\n");
 
    fHCoords.clear();
    fHWeights.clear();

@@ -177,9 +177,9 @@ void ReduceSum(int numBlocks, int blockSize, T *in, T *out, unsigned int n, T in
       Error("ReduceSum", "Unsupported block size: %d", blockSize);
 }
 
-// CUDA version of TMath::BinarySearchCUDA
+// CUDA version of TMath::BinarySearch
 template <typename T>
-__device__ Long64_t BinarySearchCUDA(Long64_t n, const T *array, T value)
+__device__ Long64_t BinarySearch(Long64_t n, const T *array, T value)
 {
    const T *pind;
 

@@ -63,7 +63,7 @@ class R__CLING_PTRCHECK(off) SYCLFillHelper : public RActionImpl<SYCLFillHelper<
    static constexpr size_t dim = getHistDim((HIST *)nullptr);
 
    std::vector<HIST *> fObjects;
-   std::vector<ROOT::Experimental::RHnSYCL<decltype(getHistType((HIST *)nullptr)), dim> *> fCudaHist;
+   std::vector<ROOT::Experimental::RHnSYCL<decltype(getHistType((HIST *)nullptr)), dim> *> fSYCLHist;
 
    template <typename H = HIST, typename = decltype(std::declval<H>().Reset())>
    void ResetIfPossible(H *h)
@@ -91,13 +91,13 @@ class R__CLING_PTRCHECK(off) SYCLFillHelper : public RActionImpl<SYCLFillHelper<
       double w = v.back();
       std::array<double, DIMW - 1> coords;
       std::copy(v.begin(), v.end() - 1, coords.begin());
-      fCudaHist[slot]->Fill(coords, w);
+      fSYCLHist[slot]->Fill(coords, w);
    }
 
    template <typename... Coords>
    void FillWithoutWeight(unsigned int slot, const Coords &...x)
    {
-      fCudaHist[slot]->Fill({x...});
+      fSYCLHist[slot]->Fill({x...});
    }
 
    // Merge overload for types with Merge(TCollection*), like TH1s
@@ -191,11 +191,11 @@ public:
    SYCLFillHelper(SYCLFillHelper &&) = default;
    SYCLFillHelper(const SYCLFillHelper &) = delete;
 
-   // Initialize fCudaHist
+   // Initialize fSYCLHist
    inline void init_cuda(HIST *obj, int i)
    {
       if (getenv("DBG"))
-         printf("Init cuda hist %d\n", i);
+         printf("Init sycl hist %d\n", i);
       auto dims = obj->GetDimension();
       std::array<Int_t, dim> ncells;
       std::array<Double_t, dim> xlow;
@@ -221,12 +221,12 @@ public:
             printf("\tdim %d --- nbins: %d xlow: %f xhigh: %f\n", d, ncells[d], xlow[d], xhigh[d]);
       }
 
-      fCudaHist[i] = new ROOT::Experimental::RHnSYCL<decltype(getHistType((HIST *)nullptr)), dim>(ncells, xlow, xhigh,
+      fSYCLHist[i] = new ROOT::Experimental::RHnSYCL<decltype(getHistType((HIST *)nullptr)), dim>(ncells, xlow, xhigh,
                                                                                                   binEdges.data());
    }
 
    SYCLFillHelper(const std::shared_ptr<HIST> &h, const unsigned int nSlots)
-      : fObjects(nSlots, nullptr), fCudaHist(nSlots, nullptr)
+      : fObjects(nSlots, nullptr), fSYCLHist(nSlots, nullptr)
    {
       fObjects[0] = h.get();
       init_cuda(fObjects[0], 0);
@@ -245,7 +245,7 @@ public:
    auto Exec(unsigned int slot, const ValTypes &...x) -> decltype(fObjects[slot]->Fill(x...), void())
    {
       if constexpr (sizeof...(ValTypes) > dim)
-         FillWithWeight<dim + 1>(slot, {((Double_t)x)...});
+         FillWithWeight<dim + 1>(slot, {((double)x)...});
       else
          FillWithoutWeight(slot, x...);
       return;
@@ -294,16 +294,16 @@ public:
 
    void Finalize()
    {
-      Double_t stats[13];
+      double stats[13];
 
       for (unsigned int i = 0; i < fObjects.size(); ++i) {
          HIST *h = fObjects[i];
-         fCudaHist[i]->RetrieveResults(h->GetArray(), stats);
+         fSYCLHist[i]->RetrieveResults(h->GetArray(), stats);
          h->SetStatsData(stats);
-         h->SetEntries(fCudaHist[i]->GetEntries());
+         h->SetEntries(fSYCLHist[i]->GetEntries());
          // printf("%d %d??\n", fObjects[i]->GetArray()->size(), fObjects[i]->GetXaxis()->GetNbins());
          if (getenv("DBG")) {
-            printf("cuda stats:");
+            printf("sycl stats:");
             for (int j = 0; j < 13; j++) {
                printf("%f ", stats[j]);
             }

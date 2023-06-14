@@ -5,7 +5,6 @@
 #include <sycl/sycl.hpp>
 #include "AxisDescriptor.h"
 
-
 namespace ROOT {
 namespace Experimental {
 
@@ -14,19 +13,19 @@ class RHnSYCL {
    // clang-format off
    sycl::queue                      queue;
 
-   sycl::buffer<T, 1>              *fHistogram;         ///< Pointer to histogram buffer on the GPU.
+   sycl::buffer<T, 1>              *fBHistogram;         ///< Pointer to histogram buffer on the GPU.
    int                              fNbins;             ///< Total number of bins in the histogram WITH under/overflow
 
    const int                        kNStats;            ///< Number of statistics.
-   sycl::buffer<AxisDescriptor, 1> *fAxes;              ///< Vector of Dim axis descriptors
-   sycl::buffer<double, 1>         *fBinEdges;          ///< Binedges per axis for non-fixed bins. TODO: remove binedges from AxisDescriptor
+   sycl::buffer<AxisDescriptor, 1> *fBAxes;             ///< Vector of Dim axis descriptors
+   const double                    *fDBinEdges;         ///< Binedges per axis for non-fixed bins. TODO: remove binedges from AxisDescriptor
 
-   sycl::buffer<double, 1>         *fCoords;            ///< 1D buffer with bufferSize #Dim-dimensional coordinates to fill.
-   sycl::buffer<double, 1>         *fWeights;           ///< Buffer of weigths for each bin on the Host.
-   sycl::buffer<int, 1>            *fBins;              ///< Pointer to array of bins (corresponding to the coordinates) to fill on the GPU.
+   sycl::buffer<double, 1>         *fBCoords;           ///< 1D buffer with bufferSize #Dim-dimensional coordinates to fill.
+   sycl::buffer<double, 1>         *fBWeights;          ///< Buffer of weigths for each bin on the Host.
+   sycl::buffer<int, 1>            *fBBins;             ///< Pointer to array of bins (corresponding to the coordinates) to fill on the GPU.
 
    int                              fEntries;           ///< Number of entries that have been filled.
-   sycl::buffer<double, 1>         *fStats;             ///< Pointer to statistics array on GPU.
+   sycl::buffer<double, 1>         *fBStats;            ///< Pointer to statistics array on GPU.
 
    // Kernel size parameters
    unsigned int                     fNumBlocks;         ///< Number of blocks used in SYCL kernels
@@ -42,13 +41,15 @@ public:
    RHnSYCL(std::array<int, Dim> ncells, std::array<double, Dim> xlow, std::array<double, Dim> xhigh,
            const double **binEdges);
 
-   ~RHnSYCL() {
-      delete fAxes;
-      delete fBinEdges;
-      delete fCoords;
-      delete fWeights;
-      delete fBins;
-      delete fStats;
+   ~RHnSYCL()
+   {
+      delete fBHistogram;
+      delete fBAxes;
+      delete fDBinEdges;
+      delete fBCoords;
+      delete fBWeights;
+      delete fBBins;
+      delete fBStats;
    }
 
    int GetEntries() const { return fEntries; }
@@ -58,8 +59,6 @@ public:
    void Fill(const std::array<double, Dim> &coords, double w = 1.);
 
 private:
-   void AllocateBuffers();
-
    void GetStats(unsigned int size);
 
    void ExecuteSYCLHisto();
