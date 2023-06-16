@@ -104,7 +104,7 @@ public:
    virtual Double_t GetCovariance(Int_t axis1=1,Int_t axis2=2) const;
    virtual void     GetRandom3(Double_t &x, Double_t &y, Double_t &, TRandom * rng = nullptr);
            void     GetStats(Double_t *stats) const override;
-#ifdef ROOT_RDF_CUDA
+#if defined(ROOT_RDF_CUDA) || defined(ROOT_RDF_SYCL)
            void SetStatsData(Double_t *stats);
 #endif
            Double_t Integral(Option_t *option="") const override;

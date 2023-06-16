@@ -1260,7 +1260,7 @@ void TH2::GetStats(Double_t *stats) const
    }
 }
 
-#ifdef ROOT_RDF_CUDA
+#if defined(ROOT_RDF_CUDA) || defined(ROOT_RDF_SYCL)
 void TH2::SetStatsData(Double_t *stats)
 {
    if (getenv("CUDA_HIST")) {

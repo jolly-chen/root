@@ -16,6 +16,12 @@ using AccDoubleR = sycl::accessor<double, 1, mode::read>;
 using AccBinsW = sycl::accessor<int, 1, mode::write>;
 using AccAxesR = sycl::accessor<AxisDescriptor, 1, mode::read>;
 
+template <class T>
+using AccHistRW = sycl::accessor<T, 1, mode::read_write>;
+
+template <class T>
+using AccLocalMem = sycl::accessor<T, 1, mode::read_write, sycl::access::target::local>;
+
 inline int FindFixBin(double x, const double *binEdges, int binEdgesIdx, int nBins, double xMin, double xMax)
 {
    int bin;
@@ -35,37 +41,6 @@ inline int FindFixBin(double x, const double *binEdges, int binEdgesIdx, int nBi
 
    return bin;
 }
-
-// inline int FindFixBin(double x, int nBins, double xMin, double xMax)
-// {
-//    int bin;
-
-//    // OPTIMIZATION: can this be done with less branching?
-//    if (x < xMin) { // underflow
-//       bin = 0;
-//    } else if (!(x < xMax)) { // overflow  (note the way to catch NaN)
-//       bin = nBins + 1;
-//    } else {
-//       bin = 1 + int(nBins * (x - xMin) / (xMax - xMin));
-//    }
-
-//    return bin;
-// }
-
-// inline int FindFixBin(double x, int nBins, double xMin, double xMax, const double *binEdges)
-// {
-//    int bin;
-
-//    if (x < xMin) { // underflow
-//       bin = 0;
-//    } else if (!(x < xMax)) { // overflow  (note the way to catch NaN)
-//       bin = nBins + 1;
-//    } else { // variable bin sizes
-//       bin = 1 + SYCLHelpers::BinarySearch(nBins + 1, binEdges, x);
-//    }
-
-//    return bin;
-// }
 
 template <unsigned int Dim>
 inline int GetBin(int i, AxisDescriptor *axes, double *coords, int *bins, const double *binEdges)
@@ -87,13 +62,81 @@ inline int GetBin(int i, AxisDescriptor *axes, double *coords, int *bins, const 
    return bin;
 }
 
+///////////////////////////////////////////
+/// Methods for incrementing a bin.
+
+template <typename T, sycl::access::address_space Space>
+inline void AddBinContent(AccHistRW<T> histogram, int bin, double weight)
+{
+   auto atomic = sycl::atomic_ref<T, sycl::memory_order::relaxed, sycl::memory_scope::device, Space>(histogram[bin]);
+   atomic.fetch_add((T)weight);
+}
+
+// TODO:
+// template <>
+// __device__ inline void AddBinContent(char *histogram, int bin, char weight)
+// {
+//    int newVal = histogram[bin] + int(weight);
+//    if (newVal > -128 && newVal < 128) {
+//       atomicExch(&histogram[bin], (char) newVal);
+//       return;
+//    }
+//    if (newVal < -127)
+//       atomicExch(&histogram[bin], (char) -127);
+//    if (newVal > 127)
+//       atomicExch(&histogram[bin], (char) 127);
+// }
+
+// template <>
+// inline void AddBinContent(AccHistRW<short> addr, int bin, double weight)
+// {
+//    // There is no CUDA atomicCAS for short so we need to operate on integers... (Assumes little endian)
+//    short *addr = &histogram[bin];
+//    int *addrInt = (int *)((char *)addr - ((size_t)addr & 2));
+//    int old = *addrInt, assumed, newVal, overwrite;
+
+//    do {
+//       assumed = old;
+
+//       if ((size_t)addr & 2) {
+//          newVal = (assumed >> 16) + (int)weight;                    // extract short from upper 16 bits
+//          overwrite = assumed & 0x0000ffff;                          // clear upper 16 bits
+//          if (newVal > -32768 && newVal < 32768)
+//             overwrite |= (newVal << 16);                            // Set upper 16 bits to newVal
+//          else if (newVal < -32767)
+//             overwrite |= 0x80010000;                                // Set upper 16 bits to min short (-32767)
+//          else
+//             overwrite |= 0x7fff0000;                                // Set upper 16 bits to max short (32767)
+//       } else {
+//          newVal = (((assumed & 0xffff) << 16) >> 16) + (int)weight; // extract short from lower 16 bits + sign extend
+//          overwrite = assumed & 0xffff0000;                          // clear lower 16 bits
+//          if (newVal > -32768 && newVal < 32768)
+//             overwrite |= (newVal & 0xffff);                         // Set lower 16 bits to newVal
+//          else if (newVal < -32767)
+//             overwrite |= 0x00008001;                                // Set lower 16 bits to min short (-32767)
+//          else
+//             overwrite |= 0x00007fff;                                // Set lower 16 bits to max short (32767)
+//       }
+//    } while (!addr.compare_exchange_strong(assumed, overwrite));
+// }
+
+// template <>
+// inline void AddBinContent(AccHistRW<int> histogram, int bin, double weight)
+// {
+//    int old = histogram[bin], assumed;
+//    long newVal;
+
+//    do {
+//       assumed = old;
+//       newVal = max(long(-INT_MAX), min(assumed + long(weight), long(INT_MAX)));
+//       old = atomicCAS(&histogram[bin], assumed, newVal);
+//    } while (assumed != old); // Repeat on failure/when the bin was already updated by another thread
+// }
+
 template <typename T, unsigned int Dim>
 class HistogramGlobal {
-   using AccHistT = sycl::accessor<T, 1, mode::read_write>;
-   // using AccHistT = T *;
-
 public:
-   HistogramGlobal(AccHistT _histogramAcc, AccAxesR _axesAcc, AccDoubleR _coordsAcc, AccDoubleR _weightsAcc,
+   HistogramGlobal(AccHistRW<T> _histogramAcc, AccAxesR _axesAcc, AccDoubleR _coordsAcc, AccDoubleR _weightsAcc,
                    AccBinsW _binsAcc, const double *_binEdges)
       : histogramAcc(_histogramAcc),
         axesAcc(_axesAcc),
@@ -108,71 +151,73 @@ public:
    {
       size_t id = item.get_linear_id();
       auto bin = GetBin<Dim>(id, axesAcc.get_pointer(), coordsAcc.get_pointer(), binsAcc.get_pointer(), binEdges);
-      // printf("id: %d bin: %d weight:%f\n", id, bin, weightsAcc[id]);
 
-      // if (id == 0) {
-      //    printf("weights:\n");
-      //    for (int i = 0; i < 5; i++) {
-      //       printf("%f ", weightsAcc[i]);
-      //    }
-      //    printf("\n");
-
-      //    printf("coords:\n");
-      //    for (int i = 0; i < 5; i++) {
-      //       printf("%f ", coordsAcc[i]);
-      //    }
-      //    printf("\n");
-
-      //    printf("axes:\n");
-      //    for (unsigned int i = 0; i < Dim; i++) {
-      //       printf("\tdim: %d nbins: %d min: %f max: %f idx: %d binedges:", i, axesAcc[i].fNbins, axesAcc[i].fMin,
-      //              axesAcc[i].fMax, axesAcc[i].binEdgesIdx);
-      //       if (binEdges == NULL) {
-      //          printf("NULL\n");
-      //       } else {
-      //          for (int j = 0; j < axesAcc[i].fNbins - 1; j++) {
-      //             printf("%f ", binEdges[axesAcc[i].binEdgesIdx + j]);
-      //          }
-      //          printf("\n");
-      //       }
-      //    }
-      //    printf("\n");
-      // }
-
-      auto hAtomic = sycl::atomic_ref<T, sycl::memory_order::relaxed, sycl::memory_scope::device,
-                                      sycl::access::address_space::global_space>(histogramAcc[bin]);
-      hAtomic.fetch_add((T)weightsAcc[id]);
-
-      // if (id == 0) {
-      //    for (int i = 0; i < 4; i++) {
-      //       printf("%f ", histogramAcc[i]);
-      //    }
-      // }
+      if (bin >= 0) {
+         AddBinContent<T, sycl::access::address_space::global_space>(histogramAcc, bin, weightsAcc[id]);
+      }
    }
 
 protected:
-   AccHistT histogramAcc;
+   AccHistRW<T> histogramAcc;
    AccAxesR axesAcc;
    AccDoubleR coordsAcc, weightsAcc;
    AccBinsW binsAcc;
    const double *binEdges;
 };
 
-// template <unsigned int Dim, class AccHistT>
-// class HistogramLocal : public HistogramGlobal<Dim, AccHistT> {
-// public:
-//    HistogramLocal(AccHistT _histogramAcc, AccAxesR _axesAcc, AccDoubleR _binEdgesAcc, AccDoubleR _coordsAcc,
-//                   AccDoubleR _weightsAcc, AccBinsW _binsAcc)
-//       : HistogramGlobal<Dim, AccHistT>(_histogramAcc, _axesAcc, _binEdgesAcc, _coordsAcc, _weightsAcc, _binsAcc)
-//    {
-//    }
+template <typename T, unsigned int Dim>
+class HistogramLocal : public HistogramGlobal<T, Dim> {
+public:
+   HistogramLocal(AccLocalMem<T> _localMem, AccHistRW<T> _histogramAcc, AccAxesR _axesAcc, AccDoubleR _coordsAcc,
+                  AccDoubleR _weightsAcc, AccBinsW _binsAcc, const double *_binEdges)
+      : HistogramGlobal<T, Dim>(_histogramAcc, _axesAcc, _coordsAcc, _weightsAcc, _binsAcc, _binEdges)
+   {
+      localMem = _localMem;
+   }
 
-//    void operator()(sycl::item<1> item) const
-//    {
-//       // size_t id = item.get_linear_id();
-//       // auto bin = GetBin<Dim>(id, axesAcc, coordsAcc, binsAcc);
-//    }
-// };
+   void operator()(sycl::nd_item<1> item) const
+   {
+      auto globalId = item.get_global_id(0);
+      auto localId = item.get_local_id(0);
+      auto group = item.get_group();
+      auto groupSize = item.get_local_range(0);
+      auto stride = groupSize * item.get_group_range(0);
+      auto nBins = this->histogramAcc.size();
+      auto nCoords = this->weightsAcc.size();
+
+      // Initialize a local per-work-group histogram
+      for (auto i = localId; i < nBins; i += groupSize) {
+         localMem[i] = 0;
+      }
+      sycl::group_barrier(group);
+
+      for (auto i = globalId; i < nCoords; i += stride) {
+         // Fill local histogram
+         auto bin = GetBin<Dim>(i, this->axesAcc.get_pointer(), this->coordsAcc.get_pointer(),
+                                this->binsAcc.get_pointer(), this->binEdges);
+
+         if (bin >= 0) {
+            // auto localAtomic = sycl::atomic_ref<T, sycl::memory_order::relaxed, sycl::memory_scope::device,
+            //                                     sycl::access::address_space::local_space>(localMem[bin]);
+            // localAtomic.fetch_add((T)this->weightsAcc[i]);
+            AddBinContent<T, sycl::access::address_space::local_space>(this->histogramAcc, bin, this->weightsAcc[i]);
+         }
+      }
+      sycl::group_barrier(group);
+
+      // Merge results in global histogram
+      for (auto i = localId; i < nBins; i += groupSize) {
+         // auto hAtomic = sycl::atomic_ref<T, sycl::memory_order::relaxed, sycl::memory_scope::device,
+         //                                 sycl::access::address_space::global_space>(this->histogramAcc[i]);
+         // hAtomic.fetch_add(localMem[i]);
+         // AddBinContent<T>(hAtomic, weightsAcc[id]);
+         AddBinContent<T, sycl::access::address_space::global_space>(this->histogramAcc, i, localMem[i]);
+      }
+   }
+
+protected:
+   AccLocalMem<T> localMem;
+};
 
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<double, Dim> xlow,
@@ -184,8 +229,8 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
      }()),
      kStatsSmemSize((WGroupSize <= 32) ? 2 * WGroupSize * sizeof(double) : WGroupSize * sizeof(double))
 {
+   // queue = sycl::queue(sycl::cpu_selector{}, SYCLHelpers::exception_handler);
    queue = sycl::queue(sycl::gpu_selector{}, SYCLHelpers::exception_handler);
-   // queue = sycl::queue(sycl::gpu_selector{}, SYCLHelpers::exception_handler);
    auto device = queue.get_device();
    std::cout << "Running SYCLHist on " << device.template get_info<sycl::info::device::name>() << "\n";
 
@@ -196,7 +241,7 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
    // Allocate buffers
    fBWeights = new sycl::buffer<double, 1>(sycl::range<1>(fBufferSize));
    fBCoords = new sycl::buffer<double, 1>(sycl::range<1>(Dim * fBufferSize));
-   fBBins = new sycl::buffer<int, 1>(sycl::range<1>(fBufferSize * Dim));
+   fBBins = new sycl::buffer<int, 1>(sycl::range<1>(Dim * fBufferSize));
    fBAxes = new sycl::buffer<AxisDescriptor, 1>(sycl::range<1>(Dim));
    std::vector<double> binEdgesFlat;
    int numBinEdges = 0;
@@ -204,31 +249,31 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
    // Initialize axis descriptors.
    {
       sycl::host_accessor axesAcc{*fBAxes, sycl::write_only, sycl::no_init};
-      for (unsigned int i = 0; i < Dim; i++) {
+      for (unsigned int d = 0; d < Dim; d++) {
          AxisDescriptor axis;
-         axis.fNbins = ncells[i];
-         axis.fMin = xlow[i];
-         axis.fMax = xhigh[i];
+         axis.fNbins = ncells[d];
+         axis.fMin = xlow[d];
+         axis.fMax = xhigh[d];
          axis.kBinEdges = NULL;
 
-         if (binEdges[i] != NULL) {
-            binEdgesFlat.insert(binEdgesFlat.end(), binEdges[i], binEdges[i] + (ncells[i] - 1));
+         if (binEdges[d] != NULL) {
+            binEdgesFlat.insert(binEdgesFlat.end(), binEdges[d], binEdges[d] + (ncells[d] - 1));
             axis.binEdgesIdx = numBinEdges;
-            numBinEdges += ncells[i] - 1;
+            numBinEdges += ncells[d] - 1;
          } else {
             axis.binEdgesIdx = -1;
          }
 
-         axesAcc[i] = axis;
-         fNbins *= ncells[i];
+         axesAcc[d] = axis;
+         fNbins *= ncells[d];
       }
    }
 
    // Allocate and initialize buffers for the histogram and statistics.
    fBHistogram = new sycl::buffer<T, 1>(sycl::range<1>(fNbins));
-   SYCLHelpers::InitializeZero(queue, *fBHistogram, fNbins);
+   SYCLHelpers::InitializeToZero(queue, *fBHistogram, fNbins);
    fBStats = new sycl::buffer<double, 1>(sycl::range<1>(kNStats));
-   SYCLHelpers::InitializeZero(queue, *fBStats, fNbins);
+   SYCLHelpers::InitializeToZero(queue, *fBStats, kNStats);
 
    // Initialize BinEdges buffer.
    fDBinEdges = NULL;
@@ -252,12 +297,14 @@ void RHnSYCL<T, Dim, WGroupSize>::Fill(const std::array<double, Dim> &coords, do
    fEntries++;
 
    {
-      sycl::host_accessor coordsAcc{*fBCoords, sycl::write_only, sycl::no_init};
-      sycl::host_accessor weightsAcc{*fBWeights, sycl::write_only, sycl::no_init};
+      sycl::host_accessor coordsAcc{*fBCoords, sycl::range<1>(Dim), sycl::id{bufferIdx * Dim}, sycl::write_only,
+                                    sycl::no_init};
+      sycl::host_accessor weightsAcc{*fBWeights, sycl::range<1>(1), sycl::id{bufferIdx}, sycl::write_only,
+                                     sycl::no_init};
       for (unsigned int i = 0; i < Dim; i++) {
-         coordsAcc[bufferIdx * Dim + i] = coords[i];
+         coordsAcc[i] = coords[i];
       }
-      weightsAcc[bufferIdx] = w;
+      weightsAcc[0] = w;
    }
 
    // Only execute when a certain number of values are buffered to increase the GPU workload and decrease the
@@ -288,36 +335,38 @@ void RHnSYCL<T, Dim, WGroupSize>::ExecuteSYCLHisto()
 {
    unsigned int size = fmin(fBufferSize, fEntries % fBufferSize);
 
-   // if (fHistoSmemSize > fMaxSmemSize) {
-   queue.submit([&](sycl::handler &cgh) {
-      // Get handles to SYCL buffers.
-      sycl::accessor histogramAcc{*fBHistogram, cgh, sycl::read_write};
-      sycl::accessor axesAcc{*fBAxes, cgh, sycl::read_only};
-      sycl::accessor weightsAcc{*fBWeights, cgh, sycl::read_only};
-      sycl::accessor coordsAcc{*fBCoords, cgh, sycl::read_only};
-      sycl::accessor binsAcc{*fBBins, cgh, sycl::write_only, sycl::no_init};
+   if (fHistoSmemSize > fMaxSmemSize) {
+      queue.submit([&](sycl::handler &cgh) {
+         // Get handles to SYCL buffers.
+         sycl::accessor histogramAcc{*fBHistogram, cgh, sycl::read_write};
+         sycl::accessor axesAcc{*fBAxes, cgh, sycl::read_only};
+         sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
+         sycl::accessor coordsAcc{*fBCoords, cgh, sycl::range<1>(size * Dim), sycl::read_only};
+         sycl::accessor binsAcc{*fBBins, cgh, sycl::range<1>(size * Dim), sycl::write_only, sycl::no_init};
 
-      // Partitions the vector pairs over available threads and computes the invariant masses.
-      cgh.parallel_for(sycl::range<1>(size),
-                       HistogramGlobal<T, Dim>(histogramAcc, axesAcc, coordsAcc, weightsAcc, binsAcc, fDBinEdges));
-   });
-   // } else {
-   // queue.submit([&](sycl::handler &cgh) {
-   //    // Similar to CUDA shared memory.
-   //    // auto localMemRange = sycl::range<1>(WGroupSize);
-   //    // sycl::accessor<T, 1, mode::read_write, sycl::access::target::local> LocalMem(localMemRange,
-   //    cgh);
+         // Partitions the vector pairs over available threads and computes the invariant masses.
+         cgh.parallel_for(sycl::range<1>(size),
+                          HistogramGlobal<T, Dim>(histogramAcc, axesAcc, coordsAcc, weightsAcc, binsAcc, fDBinEdges));
+      });
+   } else {
+      queue.submit([&](sycl::handler &cgh) {
+         // Similar to CUDA shared memory.
+         sycl::accessor<T, 1, mode::read_write, sycl::access::target::local> localMem(sycl::range<1>(fNbins), cgh);
 
-   //    // Get handles to SYCL buffers.
-   //    auto weightsAcc = fBWeights->get_access<mode::read>(cgh);
-   //    auto coordsAcc = fBCoords->get_access<mode::read>(cgh);
-   //    auto hAcc = fBHistogram.template get_access<mode::read_write>(cgh);
+         // Get handles to SYCL buffers.
+         sycl::accessor histogramAcc{*fBHistogram, cgh, sycl::read_write};
+         sycl::accessor axesAcc{*fBAxes, cgh, sycl::read_only};
+         sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
+         sycl::accessor coordsAcc{*fBCoords, cgh, sycl::range<1>(size * Dim), sycl::read_only};
+         sycl::accessor binsAcc{*fBBins, cgh, sycl::range<1>(size * Dim), sycl::write_only, sycl::no_init};
 
-   //    cgh.parallel_for(sycl::range<1>(size), HistogramGlobal(hAcc, coordsAcc, weightsAcc));
-   // });
-   // } // end of scope, ensures data copied back to host
+         auto execution_range = sycl::nd_range<1>{sycl::range<1>{((size + WGroupSize - 1) / WGroupSize) * WGroupSize},
+                                                  sycl::range<1>{WGroupSize}};
 
-   // SYCLHelpers::PrintArray(queue, fBHistogram, fNbins);
+         cgh.parallel_for(execution_range, HistogramLocal<T, Dim>(localMem, histogramAcc, axesAcc, coordsAcc,
+                                                                  weightsAcc, binsAcc, fDBinEdges));
+      });
+   } // end of scope, ensures data copied back to host
 }
 
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
@@ -328,14 +377,9 @@ void RHnSYCL<T, Dim, WGroupSize>::RetrieveResults(T *histResult, double *statsRe
       ExecuteSYCLHisto();
    }
 
-   try {
-      queue.copy(sycl::accessor{*fBHistogram, sycl::read_only}, histResult);
-      queue.wait_and_throw();
-   } catch (sycl::exception const &e) {
-      std::cout << "Caught synchronous SYCL exception"
-                << " :" << __LINE__ << ":\n"
-                << e.what() << std::endl;
-   }
+   queue.copy(sycl::accessor{*fBHistogram, sycl::read_only}, histResult);
+   queue.copy(sycl::accessor{*fBStats, sycl::read_only}, statsResult);
+   queue.wait();
 }
 
 #include "RHnSYCL-impl.cxx"

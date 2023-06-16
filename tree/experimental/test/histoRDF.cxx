@@ -10,7 +10,7 @@
 #include "TH1.h"
 #include "TAxis.h"
 
-const char *test_environments[] = {"CUDA_HIST", "SYCL_HIST"};
+std::vector<const char *> test_environments = {"CUDA_HIST", "SYCL_HIST"};
 
 template <typename T = double, typename HIST = TH1D>
 struct HistProperties {
@@ -28,10 +28,11 @@ struct HistProperties {
       nCells = h->GetNcells();
 
       // Create a copy in case the array gets cleaned up by RDataframe before checking the results
-      array = new T[nCells];
-      std::copy(h->GetArray(), h->GetArray() + nCells, array);
+      array = (T*) malloc(nCells * sizeof(T));
+      auto histogram = h->GetArray();
+      std::copy(histogram, histogram + nCells, array);
 
-      stats = (double *)malloc((nStats) * sizeof(double));
+      stats = (double *)malloc(nStats * sizeof(double));
       h->GetStats(stats);
    }
 
@@ -51,7 +52,7 @@ protected:
 
    HistoTestFixture1D()
    {
-      numRows = 5;
+      numRows = 42;
       numBins = numRows - 2; // -2 to also test filling u/overflow.
       startBin = 0;
       startFill = startBin - 1;
@@ -82,9 +83,17 @@ protected:
    /**
     * Helper functions for toggling ON/OFF GPU histogramming.
     */
-   void EnableGPU() { setenv(env, "1", 1); }
+   void EnableGPU()
+   {
+      DisableGPU();
+      setenv(env, "1", 1);
+   }
 
-   void DisableGPU() { unsetenv(env); }
+   void DisableGPU()
+   {
+      for (unsigned int i = 0; i < test_environments.size(); i++)
+         unsetenv(test_environments[i]);
+   }
 };
 
 class HistoTestFixture2D : public HistoTestFixture1D {

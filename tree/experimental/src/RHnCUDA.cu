@@ -137,7 +137,7 @@ __global__ void HistoKernel(T *histogram, AxisDescriptor *axes, int nBins, doubl
    auto sMem = CUDAHelpers::shared_memory_proxy<T>();
    unsigned int tid = threadIdx.x + blockDim.x * blockIdx.x;
    unsigned int localTid = threadIdx.x;
-   unsigned int stride = blockDim.x * gridDim.x;
+   unsigned int stride = blockDim.x * gridDim.x; // total number of threads
 
    // Initialize a local per-block histogram
    for (auto i = localTid; i < nBins; i += blockDim.x) {
@@ -310,7 +310,7 @@ void RHnCUDA<T, Dim, BlockSize>::AllocateBuffers()
    ERRCHECK(cudaMalloc((void **)&fDBins, Dim * fBufferSize * sizeof(int)));
 
    // Allocate axes on the GPU
-   ERRCHECK(cudaMalloc((void **)&fDAxes, fBufferSize * sizeof(AxisDescriptor)));
+   ERRCHECK(cudaMalloc((void **)&fDAxes, Dim * sizeof(AxisDescriptor)));
    ERRCHECK(cudaMemcpy(fDAxes, fHAxes.data(), Dim * sizeof(AxisDescriptor), cudaMemcpyHostToDevice));
    for (auto i = 0; i < Dim; i++) {
       // Allocate memory for BinEdges array.
@@ -439,16 +439,6 @@ void RHnCUDA<T, Dim, BlockSize>::ExecuteCUDAHisto()
    ERRCHECK(cudaPeekAtLastError());
 
    GetStats(size);
-
-   // printf("weights:\n");
-   // for (int i = 0; i < size; i++) {
-   //     printf("%f ", fHWeights[i]);
-   // } printf("\n");
-
-   // printf("coords:\n");
-   // for (int i = 0; i < size; i++) {
-   //     printf("%f ", fHCoords[i]);
-   // } printf("\n");
 
    fHCoords.clear();
    fHWeights.clear();

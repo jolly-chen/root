@@ -33,9 +33,9 @@ auto exception_handler(sycl::exception_list exceptions)
 }
 
 template <typename Acc>
-class InitializeZeroTask {
+class InitializeToZeroTask {
 public:
-   InitializeZeroTask(Acc _acc) : acc(_acc) {}
+   InitializeToZeroTask(Acc _acc) : acc(_acc) {}
 
    void operator()(sycl::item<1> item) const
    {
@@ -82,11 +82,11 @@ long long BinarySearch(long long n, const T *array, T value)
 }
 
 template <typename T>
-void InitializeZero(sycl::queue &queue, T arr, size_t n)
+void InitializeToZero(sycl::queue &queue, T arr, size_t n)
 {
    queue.submit([&](sycl::handler &cgh) {
       sycl::accessor acc{arr, cgh, sycl::write_only, sycl::no_init};
-      cgh.parallel_for(sycl::range<1>(n), SYCLHelpers::InitializeZeroTask(acc));
+      cgh.parallel_for(sycl::range<1>(n), SYCLHelpers::InitializeToZeroTask(acc));
    });
 }
 

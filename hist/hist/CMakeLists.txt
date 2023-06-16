@@ -174,4 +174,8 @@ if (cuda)
   target_compile_definitions(Hist PRIVATE ROOT_RDF_CUDA)
 endif()
 
+if (sycl)
+  target_compile_definitions(Hist PRIVATE ROOT_RDF_SYCL)
+endif()
+
 ROOT_ADD_TEST_SUBDIRECTORY(test)

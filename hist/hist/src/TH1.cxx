@@ -8874,7 +8874,7 @@ void TH1::SetStats(Bool_t stats)
 ////////////////////////////////////////////////////////////////////////////////
 ///
 
-#ifdef ROOT_RDF_CUDA
+#if defined(ROOT_RDF_CUDA) || defined(ROOT_RDF_SYCL)
 void TH1::SetStatsData(Double_t *stats)
 {
    if (getenv("CUDA_HIST")) {
