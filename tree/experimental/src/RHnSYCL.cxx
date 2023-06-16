@@ -65,73 +65,75 @@ inline int GetBin(int i, AxisDescriptor *axes, double *coords, int *bins, const 
 ///////////////////////////////////////////
 /// Methods for incrementing a bin.
 
-template <typename T, sycl::access::address_space Space>
-inline void AddBinContent(AccHistRW<T> histogram, int bin, double weight)
+template <sycl::access::address_space Space>
+inline void AddBinContent(AccHistRW<double> histogram, int bin, double weight)
 {
-   auto atomic = sycl::atomic_ref<T, sycl::memory_order::relaxed, sycl::memory_scope::device, Space>(histogram[bin]);
-   atomic.fetch_add((T)weight);
+   auto atomic =
+      sycl::atomic_ref<double, sycl::memory_order::relaxed, sycl::memory_scope::device, Space>(histogram[bin]);
+   atomic.fetch_add(weight);
 }
 
-// TODO:
-// template <>
-// __device__ inline void AddBinContent(char *histogram, int bin, char weight)
-// {
-//    int newVal = histogram[bin] + int(weight);
-//    if (newVal > -128 && newVal < 128) {
-//       atomicExch(&histogram[bin], (char) newVal);
-//       return;
-//    }
-//    if (newVal < -127)
-//       atomicExch(&histogram[bin], (char) -127);
-//    if (newVal > 127)
-//       atomicExch(&histogram[bin], (char) 127);
-// }
+template <sycl::access::address_space Space>
+inline void AddBinContent(AccHistRW<float> histogram, int bin, double weight)
+{
+   auto atomic =
+      sycl::atomic_ref<float, sycl::memory_order::relaxed, sycl::memory_scope::device, Space>(histogram[bin]);
+   atomic.fetch_add((float)weight);
+}
 
-// template <>
-// inline void AddBinContent(AccHistRW<short> addr, int bin, double weight)
-// {
-//    // There is no CUDA atomicCAS for short so we need to operate on integers... (Assumes little endian)
-//    short *addr = &histogram[bin];
-//    int *addrInt = (int *)((char *)addr - ((size_t)addr & 2));
-//    int old = *addrInt, assumed, newVal, overwrite;
+template <sycl::access::address_space Space>
+inline void AddBinContent(AccHistRW<short> histogram, int bin, double weight)
+{
+   // There is no fetch_add for short so we need to operate on integers... (Assumes little endian)
+   short *addr = &histogram.get_pointer()[bin];
+   int *addrInt = (int *)((char *)addr - ((size_t)addr & 2));
+   int assumed, newVal, overwrite;
+   bool success = false;
 
-//    do {
-//       assumed = old;
+   do {
+      assumed = histogram[bin];
 
-//       if ((size_t)addr & 2) {
-//          newVal = (assumed >> 16) + (int)weight;                    // extract short from upper 16 bits
-//          overwrite = assumed & 0x0000ffff;                          // clear upper 16 bits
-//          if (newVal > -32768 && newVal < 32768)
-//             overwrite |= (newVal << 16);                            // Set upper 16 bits to newVal
-//          else if (newVal < -32767)
-//             overwrite |= 0x80010000;                                // Set upper 16 bits to min short (-32767)
-//          else
-//             overwrite |= 0x7fff0000;                                // Set upper 16 bits to max short (32767)
-//       } else {
-//          newVal = (((assumed & 0xffff) << 16) >> 16) + (int)weight; // extract short from lower 16 bits + sign extend
-//          overwrite = assumed & 0xffff0000;                          // clear lower 16 bits
-//          if (newVal > -32768 && newVal < 32768)
-//             overwrite |= (newVal & 0xffff);                         // Set lower 16 bits to newVal
-//          else if (newVal < -32767)
-//             overwrite |= 0x00008001;                                // Set lower 16 bits to min short (-32767)
-//          else
-//             overwrite |= 0x00007fff;                                // Set lower 16 bits to max short (32767)
-//       }
-//    } while (!addr.compare_exchange_strong(assumed, overwrite));
-// }
+      if ((size_t)addr & 2) {
+         newVal = (assumed >> 16) + (int)weight; // extract short from upper 16 bits
+         overwrite = assumed & 0x0000ffff;       // clear upper 16 bits
+         if (newVal > -32768 && newVal < 32768)
+            overwrite |= (newVal << 16); // Set upper 16 bits to newVal
+         else if (newVal < -32767)
+            overwrite |= 0x80010000; // Set upper 16 bits to min short (-32767)
+         else
+            overwrite |= 0x7fff0000; // Set upper 16 bits to max short (32767)
+      } else {
+         newVal = (((assumed & 0xffff) << 16) >> 16) + (int)weight; // extract short from lower 16 bits + sign extend
+         overwrite = assumed & 0xffff0000;                          // clear lower 16 bits
+         if (newVal > -32768 && newVal < 32768)
+            overwrite |= (newVal & 0xffff); // Set lower 16 bits to newVal
+         else if (newVal < -32767)
+            overwrite |= 0x00008001; // Set lower 16 bits to min short (-32767)
+         else
+            overwrite |= 0x00007fff; // Set lower 16 bits to max short (32767)
+      }
 
-// template <>
-// inline void AddBinContent(AccHistRW<int> histogram, int bin, double weight)
-// {
-//    int old = histogram[bin], assumed;
-//    long newVal;
+      auto atomic = sycl::atomic_ref<int, sycl::memory_order::relaxed, sycl::memory_scope::device, Space>(*addrInt);
+      success = atomic.compare_exchange_strong(assumed, overwrite);
+   } while (!success);
+}
 
-//    do {
-//       assumed = old;
-//       newVal = max(long(-INT_MAX), min(assumed + long(weight), long(INT_MAX)));
-//       old = atomicCAS(&histogram[bin], assumed, newVal);
-//    } while (assumed != old); // Repeat on failure/when the bin was already updated by another thread
-// }
+template <sycl::access::address_space Space>
+inline void AddBinContent(AccHistRW<int> histogram, int bin, double weight)
+{
+   int assumed;
+   long newVal;
+   bool success = false;
+
+   // Repeat on failure/when the bin was already updated by another thread
+   do {
+      assumed = histogram[bin];
+      newVal = sycl::max(long(-INT_MAX), sycl::min(assumed + long(weight), long(INT_MAX)));
+      auto atomic =
+         sycl::atomic_ref<int, sycl::memory_order::relaxed, sycl::memory_scope::device, Space>(histogram[bin]);
+      success = atomic.compare_exchange_strong(assumed, (int)newVal);
+   } while (!success);
+}
 
 template <typename T, unsigned int Dim>
 class HistogramGlobal {
@@ -153,7 +155,7 @@ public:
       auto bin = GetBin<Dim>(id, axesAcc.get_pointer(), coordsAcc.get_pointer(), binsAcc.get_pointer(), binEdges);
 
       if (bin >= 0) {
-         AddBinContent<T, sycl::access::address_space::global_space>(histogramAcc, bin, weightsAcc[id]);
+         AddBinContent<sycl::access::address_space::global_space>(histogramAcc, bin, weightsAcc[id]);
       }
    }
 
@@ -197,21 +199,14 @@ public:
                                 this->binsAcc.get_pointer(), this->binEdges);
 
          if (bin >= 0) {
-            // auto localAtomic = sycl::atomic_ref<T, sycl::memory_order::relaxed, sycl::memory_scope::device,
-            //                                     sycl::access::address_space::local_space>(localMem[bin]);
-            // localAtomic.fetch_add((T)this->weightsAcc[i]);
-            AddBinContent<T, sycl::access::address_space::local_space>(this->histogramAcc, bin, this->weightsAcc[i]);
+            AddBinContent<sycl::access::address_space::local_space>(this->histogramAcc, bin, this->weightsAcc[i]);
          }
       }
       sycl::group_barrier(group);
 
       // Merge results in global histogram
       for (auto i = localId; i < nBins; i += groupSize) {
-         // auto hAtomic = sycl::atomic_ref<T, sycl::memory_order::relaxed, sycl::memory_scope::device,
-         //                                 sycl::access::address_space::global_space>(this->histogramAcc[i]);
-         // hAtomic.fetch_add(localMem[i]);
-         // AddBinContent<T>(hAtomic, weightsAcc[id]);
-         AddBinContent<T, sycl::access::address_space::global_space>(this->histogramAcc, i, localMem[i]);
+         AddBinContent<sycl::access::address_space::global_space>(this->histogramAcc, i, localMem[i]);
       }
    }
 
@@ -256,7 +251,7 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
          axis.fMax = xhigh[d];
          axis.kBinEdges = NULL;
 
-         if (binEdges[d] != NULL) {
+         if (binEdges != NULL && binEdges[d] != NULL) {
             binEdgesFlat.insert(binEdgesFlat.end(), binEdges[d], binEdges[d] + (ncells[d] - 1));
             axis.binEdgesIdx = numBinEdges;
             numBinEdges += ncells[d] - 1;

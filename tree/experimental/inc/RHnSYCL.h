@@ -39,17 +39,12 @@ public:
    RHnSYCL() = delete;
 
    RHnSYCL(std::array<int, Dim> ncells, std::array<double, Dim> xlow, std::array<double, Dim> xhigh,
-           const double **binEdges);
+           const double **binEdges = NULL);
 
    ~RHnSYCL()
    {
-      delete fBHistogram;
-      delete fBAxes;
-      delete fDBinEdges;
-      delete fBCoords;
-      delete fBWeights;
-      delete fBBins;
-      delete fBStats;
+      if (fDBinEdges != NULL)
+         sycl::free(&fDBinEdges, queue);
    }
 
    int GetEntries() const { return fEntries; }

@@ -12,6 +12,7 @@ if (cuda)
 endif()
 
 if (sycl)
+    ROOT_ADD_GTEST(HistoFillSYCL histoFillSYCL.cxx LIBRARIES SYCLHist Hist ROOTDataFrame)
     list(APPEND histoRDFLibs SYCLHist)
 endif()
 
