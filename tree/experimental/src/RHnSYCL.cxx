@@ -13,6 +13,8 @@ class histogram_local;
 using mode = sycl::access::mode;
 
 using AccDoubleR = sycl::accessor<double, 1, mode::read>;
+using AccDoubleW = sycl::accessor<double, 1, mode::write>;
+using AccBinsR = sycl::accessor<int, 1, mode::read>;
 using AccBinsW = sycl::accessor<int, 1, mode::write>;
 using AccAxesR = sycl::accessor<AxisDescriptor, 1, mode::read>;
 
@@ -21,6 +23,9 @@ using AccHistRW = sycl::accessor<T, 1, mode::read_write>;
 
 template <class T>
 using AccLocalMem = sycl::accessor<T, 1, mode::read_write, sycl::access::target::local>;
+
+////////////////////////////////////////////////////////////////////////////////
+/// Bin calculation methods
 
 inline int FindFixBin(double x, const double *binEdges, int binEdgesIdx, int nBins, double xMin, double xMax)
 {
@@ -135,6 +140,9 @@ inline void AddBinContent(AccHistRW<int> histogram, int bin, double weight)
    } while (!success);
 }
 
+///////////////////////////////////////////
+/// Histogram filling kernels
+
 template <typename T, unsigned int Dim>
 class HistogramGlobal {
 public:
@@ -214,18 +222,45 @@ protected:
    AccLocalMem<T> localMem;
 };
 
+///////////////////////////////////////////
+/// Statistics calculation kernels
+
+template <unsigned int Dim>
+class ExcludeUOverflowKernel {
+public:
+   ExcludeUOverflowKernel(AccBinsR _binsAcc, AccDoubleW _weightsAcc, AccAxesR _axesAcc)
+      : binsAcc(_binsAcc), weightsAcc(_weightsAcc), axesAcc(_axesAcc)
+   {
+   }
+
+   void operator()(sycl::item<1> item) const
+   {
+      size_t id = item.get_linear_id();
+      if (binsAcc[id] <= 0 || binsAcc[id] >= axesAcc[id % Dim].fNbins - 1) {
+         weightsAcc[id / Dim] = 0.;
+      }
+   }
+
+private:
+   AccBinsR binsAcc;
+   AccDoubleW weightsAcc;
+   AccAxesR axesAcc;
+};
+
+///////////////////////////////////////////
+/// RHnSYCL
+
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<double, Dim> xlow,
                                      std::array<double, Dim> xhigh, const double **binEdges)
-   : kNStats([]() {
+   : queue(sycl::cpu_selector{}, SYCLHelpers::exception_handler),
+     kNStats([]() {
         // Sum of weights (squared) + sum of weight * bin (squared) per axis + sum of weight * binAx1 * binAx2 for
         // all axis combinations
         return Dim > 1 ? 2 + 2 * Dim + TMath::Binomial(Dim, 2) : 2 + 2 * Dim;
      }()),
      kStatsSmemSize((WGroupSize <= 32) ? 2 * WGroupSize * sizeof(double) : WGroupSize * sizeof(double))
 {
-   // queue = sycl::queue(sycl::cpu_selector{}, SYCLHelpers::exception_handler);
-   queue = sycl::queue(sycl::gpu_selector{}, SYCLHelpers::exception_handler);
    auto device = queue.get_device();
    std::cout << "Running SYCLHist on " << device.template get_info<sycl::info::device::name>() << "\n";
 
@@ -234,10 +269,10 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
    fEntries = 0;
 
    // Allocate buffers
-   fBWeights = new sycl::buffer<double, 1>(sycl::range<1>(fBufferSize));
-   fBCoords = new sycl::buffer<double, 1>(sycl::range<1>(Dim * fBufferSize));
-   fBBins = new sycl::buffer<int, 1>(sycl::range<1>(Dim * fBufferSize));
-   fBAxes = new sycl::buffer<AxisDescriptor, 1>(sycl::range<1>(Dim));
+   fBWeights = sycl::buffer<double, 1>(sycl::range<1>(fBufferSize));
+   fBCoords = sycl::buffer<double, 1>(sycl::range<1>(Dim * fBufferSize));
+   fBBins = sycl::buffer<int, 1>(sycl::range<1>(Dim * fBufferSize));
+   fBAxes = sycl::buffer<AxisDescriptor, 1>(sycl::range<1>(Dim));
    std::vector<double> binEdgesFlat;
    int numBinEdges = 0;
 
@@ -265,10 +300,16 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
    }
 
    // Allocate and initialize buffers for the histogram and statistics.
-   fBHistogram = new sycl::buffer<T, 1>(sycl::range<1>(fNbins));
+   fBHistogram = sycl::buffer<T, 1>(sycl::range<1>(fNbins));
    SYCLHelpers::InitializeToZero(queue, *fBHistogram, fNbins);
-   fBStats = new sycl::buffer<double, 1>(sycl::range<1>(kNStats));
-   SYCLHelpers::InitializeToZero(queue, *fBStats, kNStats);
+
+   // The sycl reduction constructor does not accept an offset into a buffer for the output values, so we use an
+   // array of single-size buffers instead of a single buffer with size kNStats.
+   for (int i = 0; i < kNStats; i++) {
+      // fBStats.push_back(sycl::buffer<double, 1>(sycl::range<1>(1)));
+      // fBStats[i] = sycl::buffer<double, 1>(sycl::range<1>(1));
+   }
+   // fBStats = (double *)sycl::malloc_device(kNStats * sizeof(double), queue);
 
    // Initialize BinEdges buffer.
    fDBinEdges = NULL;
@@ -323,6 +364,84 @@ unsigned int nextPow2(unsigned int x)
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 void RHnSYCL<T, Dim, WGroupSize>::GetStats(unsigned int size)
 {
+   // Set weights of over/underflow bins to zero
+   // queue.submit([&](sycl::handler &cgh) {
+   //    sycl::accessor binsAcc{*fBBins, cgh, sycl::range<1>(size * Dim), sycl::read_only};
+   //    sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::write_only};
+   //    sycl::accessor axesAcc{*fBAxes, cgh, sycl::read_only};
+   //    cgh.parallel_for(sycl::range<1>(size * Dim), ExcludeUOverflowKernel<Dim>(binsAcc, weightsAcc, axesAcc));
+   // });
+
+   // queue.submit([&](sycl::handler &cgh) {
+   //    sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
+   //    sycl::accessor sumW2Acc{fBStats[1], cgh, sycl::no_init};
+
+   //    auto GetSumW2 = sycl::reduction(sumW2Acc, sycl::plus<double>());
+
+   //    cgh.parallel_for(sycl::range<1>(size), GetSumW2, [=](sycl::id<1> id, auto &sumw2) {
+   //       sumw2 += weightsAcc[id] * weightsAcc[id];
+   //    });
+   // });
+
+   // queue.submit([&](sycl::handler &cgh) {
+   //    sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
+   //    sycl::accessor sumWAcc{fBStats[0], cgh, sycl::no_init};
+   //    sycl::accessor sumW2Acc{fBStats[1], cgh, sycl::no_init};
+
+   //    // auto GetSumW = sycl::reduction(&fBStats[0], sycl::plus<double>());
+   //    // auto GetSumW2 = sycl::reduction(&fBStats[1], sycl::plus<double>());
+   //    auto GetSumW = sycl::reduction(sumWAcc, sycl::plus<double>());
+   //    auto GetSumW2 = sycl::reduction(sumW2Acc, sycl::plus<double>());
+
+   //    cgh.parallel_for(sycl::range<1>(size), GetSumW, GetSumW2, [=](sycl::id<1> id, auto &sumw, auto &sumw2) {
+   //       sumw += weightsAcc[id];
+   //       sumw2 += weightsAcc[id] * weightsAcc[id];
+   //    });
+   // });
+
+   // auto offset = 2;
+   // for (auto d = 0U; d < Dim; d++) {
+   //    queue.submit([&](sycl::handler &cgh) {
+   //       sycl::accessor coordsAcc{*fBCoords, cgh, sycl::range<1>(size * Dim), sycl::read_only};
+   //       sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
+
+   //       // auto GetSumWAxis = sycl::reduction(&fBStats[offset++], sycl::plus<double>());
+   //       // auto GetSumWAxis2 = sycl::reduction(&fBStats[offset++], sycl::plus<double>());
+
+   //       // printf("offset: %d\n", offset);
+   //       sycl::accessor sumWAxisAcc{fBStats[offset++], cgh, sycl::write_only, sycl::no_init};
+   //       // printf("offset: %d\n", offset);
+   //       sycl::accessor sumWAxis2Acc{fBStats[offset++], cgh, sycl::write_only, sycl::no_init};
+
+   //       // Multiply weight with coordinate of current axis. E.g., for Dim = 2 this computes Tsumwx and Tsumwy
+   //       auto GetSumWAxis = sycl::reduction(sumWAxisAcc, sycl::plus<double>());
+   //       // Squares coodinate per axis. E.g., for Dim = 2 this computes Tsumwx2 and Tsumwy2
+   //       auto GetSumWAxis2 = sycl::reduction(sumWAxis2Acc, sycl::plus<double>());
+
+   //       cgh.parallel_for(sycl::range<1>(size), GetSumWAxis, GetSumWAxis2,
+   //                        [=](sycl::id<1> id, auto &sumwaxis, auto &sumwaxis2) {
+   //                           sumwaxis += weightsAcc[id] * coordsAcc[id * Dim + d];
+   //                           sumwaxis2 += weightsAcc[id] * coordsAcc[id * Dim + d] * coordsAcc[id * Dim + d];
+   //                        });
+   //    });
+
+   //    for (auto prev_d = 0U; prev_d < d; prev_d++) {
+   //       // Multiplies coordinate of current axis with the "previous" axis. E.g., for Dim = 2 this computes
+   //       Tsumwxy queue.submit([&](sycl::handler &cgh) {
+   //          sycl::accessor coordsAcc{*fBCoords, cgh, sycl::range<1>(size * Dim), sycl::read_only};
+   //          sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
+   //          printf("offset: %d\n", offset);
+   //          sycl::accessor sumWAxisAxisAcc{fBStats[offset++], cgh, sycl::write_only, sycl::no_init};
+
+   //          // Multiplies coordinate of current axis with the "previous" axis. E.g., for Dim = 2 this computes
+   //          Tsumwxy auto GetSumWAxisAxis = sycl::reduction(sumWAxisAxisAcc, sycl::plus<double>());
+
+   //          cgh.parallel_for(sycl::range<1>(size), GetSumWAxisAxis, [=](sycl::id<1> id, auto &sumwaxisaxis) {
+   //             sumwaxisaxis += weightsAcc[id] * coordsAcc[id * Dim + d] * coordsAcc[id * Dim + prev_d];
+   //          });
+   //       });
+   //    }
+   // }
 }
 
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
@@ -362,6 +481,8 @@ void RHnSYCL<T, Dim, WGroupSize>::ExecuteSYCLHisto()
                                                                   weightsAcc, binsAcc, fDBinEdges));
       });
    } // end of scope, ensures data copied back to host
+
+   GetStats(size);
 }
 
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
@@ -373,7 +494,12 @@ void RHnSYCL<T, Dim, WGroupSize>::RetrieveResults(T *histResult, double *statsRe
    }
 
    queue.copy(sycl::accessor{*fBHistogram, sycl::read_only}, histResult);
-   queue.copy(sycl::accessor{*fBStats, sycl::read_only}, statsResult);
+   // queue.memcpy(statsResult, fBStats, kNStats * sizeof(double));
+   // for (auto i = 0; i < kNStats; i++) {
+   //    sycl::host_accessor statAcc{fBStats[i], sycl::read_only};
+   // statsResult[i] = statAcc[0];
+   // }
+
    queue.wait();
 }
 

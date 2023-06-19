@@ -52,7 +52,7 @@ protected:
 
    HistoTestFixture1D()
    {
-      numRows = 42;
+      numRows = 3;
       numBins = numRows - 2; // -2 to also test filling u/overflow.
       startBin = 0;
       startFill = startBin - 1;

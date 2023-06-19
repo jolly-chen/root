@@ -43,6 +43,11 @@ public:
    RHnCUDA(std::array<int, Dim> ncells, std::array<double, Dim> xlow, std::array<double, Dim> xhigh,
            const double **binEdges = NULL);
 
+   ~RHnCUDA();
+
+   RHnCUDA(const RHnCUDA &) = delete;
+   RHnCUDA &operator=(const RHnCUDA &) = delete;
+
    int GetEntries() { return fEntries; }
 
    void AllocateBuffers();

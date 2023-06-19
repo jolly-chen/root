@@ -208,7 +208,7 @@ TYPED_TEST(HistoTestFixture, FillFixedBins)
 {
    // int, double, or float
    using t = typename TypeParam::type;
-   auto h = this->histogram;
+   auto &h = this->histogram;
 
    std::vector<std::array<double, this->dim>> coords = {
       Repeat<double, this->dim>(this->startBin - 1),                   // Underflow
@@ -242,7 +242,7 @@ TYPED_TEST(HistoTestFixture, FillFixedBinsWeighted)
 {
    // int, double, or float
    using t = typename TypeParam::type;
-   auto h = this->histogram;
+   auto &h = this->histogram;
 
    std::vector<std::array<double, this->dim>> coords = {
       Repeat<double, this->dim>(this->startBin - 1),                   // Underflow

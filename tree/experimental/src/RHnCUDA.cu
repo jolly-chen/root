@@ -176,6 +176,9 @@ __global__ void HistoKernelGlobal(T *histogram, AxisDescriptor *axes, int nBins,
    }
 }
 
+///////////////////////////////////////////
+/// Statistics calculation kernels
+
 template <unsigned int BlockSize>
 __global__ void GetSumW(double *weights, unsigned int nCoords, double *fDIntermediateStats)
 {
@@ -238,11 +241,9 @@ __global__ void ExcludeUOverflowKernel(int *bins, double *weights, unsigned int 
    unsigned int tid = threadIdx.x + blockDim.x * blockIdx.x;
    unsigned int stride = blockDim.x * gridDim.x;
 
-   for (auto i = tid; i < nCoords; i += stride) {
-      for (auto d = 0; d < Dim; d++) {
-         if (bins[i * Dim + d] <= 0 || bins[i * Dim + d] >= axes[d].fNbins - 1) {
-            weights[i] = 0.;
-         }
+   for (auto i = tid; i < nCoords * Dim; i += stride) {
+      if (bins[i] <= 0 || bins[i] >= axes[i % Dim].fNbins - 1) {
+         weights[i / Dim] = 0.;
       }
    }
 }
@@ -291,6 +292,18 @@ RHnCUDA<T, Dim, BlockSize>::RHnCUDA(std::array<int, Dim> ncells, std::array<doub
    fHistoSmemSize = fNbins * sizeof(T);
 
    AllocateBuffers();
+}
+
+template <typename T, unsigned int Dim, unsigned int BlockSize>
+RHnCUDA<T, Dim, BlockSize>::~RHnCUDA()
+{
+   ERRCHECK(cudaFree(fDHistogram));
+   ERRCHECK(cudaFree(fDAxes));
+   ERRCHECK(cudaFree(fDCoords));
+   ERRCHECK(cudaFree(fDWeights));
+   ERRCHECK(cudaFree(fDBins));
+   ERRCHECK(cudaFree(fDIntermediateStats));
+   ERRCHECK(cudaFree(fDStats));
 }
 
 template <typename T, unsigned int Dim, unsigned int BlockSize>
