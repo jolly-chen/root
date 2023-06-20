@@ -131,7 +131,7 @@ protected:
    double *stats, *expectedStats;
    int nStats;
 
-   const RHnCUDA<histType, dim> histogram;
+   RHnCUDA<histType, dim> histogram;
 
    HistoTestFixture() : histogram(Repeat<int, dim>(numBins), Repeat<double, dim>(startBin), Repeat<double, dim>(endBin))
    {

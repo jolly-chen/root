@@ -27,7 +27,7 @@ using AccLocalMem = sycl::accessor<T, 1, mode::read_write, sycl::access::target:
 ////////////////////////////////////////////////////////////////////////////////
 /// Bin calculation methods
 
-inline int FindFixBin(double x, const double *binEdges, int binEdgesIdx, int nBins, double xMin, double xMax)
+inline int FindFixBin(double x, double *binEdges, int binEdgesIdx, int nBins, double xMin, double xMax)
 {
    int bin;
 
@@ -48,7 +48,7 @@ inline int FindFixBin(double x, const double *binEdges, int binEdgesIdx, int nBi
 }
 
 template <unsigned int Dim>
-inline int GetBin(int i, AxisDescriptor *axes, double *coords, int *bins, const double *binEdges)
+inline int GetBin(int i, AxisDescriptor *axes, double *coords, int *bins, double *binEdges)
 {
    auto *x = &coords[i * Dim];
 
@@ -147,7 +147,7 @@ template <typename T, unsigned int Dim>
 class HistogramGlobal {
 public:
    HistogramGlobal(AccHistRW<T> _histogramAcc, AccAxesR _axesAcc, AccDoubleR _coordsAcc, AccDoubleR _weightsAcc,
-                   AccBinsW _binsAcc, const double *_binEdges)
+                   AccBinsW _binsAcc, double *_binEdges)
       : histogramAcc(_histogramAcc),
         axesAcc(_axesAcc),
         coordsAcc(_coordsAcc),
@@ -172,14 +172,14 @@ protected:
    AccAxesR axesAcc;
    AccDoubleR coordsAcc, weightsAcc;
    AccBinsW binsAcc;
-   const double *binEdges;
+   double *binEdges;
 };
 
 template <typename T, unsigned int Dim>
 class HistogramLocal : public HistogramGlobal<T, Dim> {
 public:
    HistogramLocal(AccLocalMem<T> _localMem, AccHistRW<T> _histogramAcc, AccAxesR _axesAcc, AccDoubleR _coordsAcc,
-                  AccDoubleR _weightsAcc, AccBinsW _binsAcc, const double *_binEdges)
+                  AccDoubleR _weightsAcc, AccBinsW _binsAcc, double *_binEdges)
       : HistogramGlobal<T, Dim>(_histogramAcc, _axesAcc, _coordsAcc, _weightsAcc, _binsAcc, _binEdges)
    {
       localMem = _localMem;
@@ -194,6 +194,9 @@ public:
       auto stride = groupSize * item.get_group_range(0);
       auto nBins = this->histogramAcc.size();
       auto nCoords = this->weightsAcc.size();
+
+      // printf("globalID: %d localId %lu groupSize: %lu stride: %lu nbins: %lu ncoords: %lu localsize: %lu\n",
+      //        globalId, localId, groupSize, stride, nBins, nCoords, localMem.size());
 
       // Initialize a local per-work-group histogram
       for (auto i = localId; i < nBins; i += groupSize) {
@@ -305,16 +308,16 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
 
    // The sycl reduction constructor does not accept an offset into a buffer for the output values, so we use an
    // array of single-size buffers instead of a single buffer with size kNStats.
-   for (int i = 0; i < kNStats; i++) {
-      // fBStats.push_back(sycl::buffer<double, 1>(sycl::range<1>(1)));
-      // fBStats[i] = sycl::buffer<double, 1>(sycl::range<1>(1));
-   }
+   // for (int i = 0; i < kNStats; i++) {
+   //    fBStats.push_back(sycl::buffer<double, 1>(sycl::range<1>(1)));
+   //    // fBStats[i] = sycl::buffer<double, 1>(sycl::range<1>(1));
+   // }
    // fBStats = (double *)sycl::malloc_device(kNStats * sizeof(double), queue);
 
    // Initialize BinEdges buffer.
    fDBinEdges = NULL;
    if (numBinEdges > 0) {
-      fDBinEdges = (const double *)sycl::malloc_device(numBinEdges * sizeof(double), queue);
+      fDBinEdges = (double *)sycl::malloc_device(numBinEdges * sizeof(double), queue);
       queue.memcpy((void *)fDBinEdges, binEdgesFlat.data(), numBinEdges * sizeof(double));
       queue.wait();
    }
@@ -473,7 +476,6 @@ void RHnSYCL<T, Dim, WGroupSize>::ExecuteSYCLHisto()
          sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
          sycl::accessor coordsAcc{*fBCoords, cgh, sycl::range<1>(size * Dim), sycl::read_only};
          sycl::accessor binsAcc{*fBBins, cgh, sycl::range<1>(size * Dim), sycl::write_only, sycl::no_init};
-
          auto execution_range = sycl::nd_range<1>{sycl::range<1>{((size + WGroupSize - 1) / WGroupSize) * WGroupSize},
                                                   sycl::range<1>{WGroupSize}};
 
@@ -497,9 +499,8 @@ void RHnSYCL<T, Dim, WGroupSize>::RetrieveResults(T *histResult, double *statsRe
    // queue.memcpy(statsResult, fBStats, kNStats * sizeof(double));
    // for (auto i = 0; i < kNStats; i++) {
    //    sycl::host_accessor statAcc{fBStats[i], sycl::read_only};
-   // statsResult[i] = statAcc[0];
+   //    statsResult[i] = statAcc[0];
    // }
-
    queue.wait();
 }
 

@@ -61,9 +61,10 @@ class R__CLING_PTRCHECK(off) SYCLFillHelper : public RActionImpl<SYCLFillHelper<
    // clang-format on
 
    static constexpr size_t dim = getHistDim((HIST *)nullptr);
+   using SYCLHist_t = ROOT::Experimental::RHnSYCL<decltype(getHistType((HIST *)nullptr)), dim>;
 
-   std::vector<HIST *> fObjects;
-   std::vector<ROOT::Experimental::RHnSYCL<decltype(getHistType((HIST *)nullptr)), dim> *> fSYCLHist;
+   HIST *fObject;
+   std::unique_ptr<SYCLHist_t> fSYCLHist;
 
    template <typename H = HIST, typename = decltype(std::declval<H>().Reset())>
    void ResetIfPossible(H *h)
@@ -91,13 +92,13 @@ class R__CLING_PTRCHECK(off) SYCLFillHelper : public RActionImpl<SYCLFillHelper<
       double w = v.back();
       std::array<double, DIMW - 1> coords;
       std::copy(v.begin(), v.end() - 1, coords.begin());
-      fSYCLHist[slot]->Fill(coords, w);
+      fSYCLHist->Fill(coords, w);
    }
 
    template <typename... Coords>
    void FillWithoutWeight(unsigned int slot, const Coords &...x)
    {
-      fSYCLHist[slot]->Fill({x...});
+      fSYCLHist->Fill({x...});
    }
 
    // Merge overload for types with Merge(TCollection*), like TH1s
@@ -178,7 +179,7 @@ class R__CLING_PTRCHECK(off) SYCLFillHelper : public RActionImpl<SYCLFillHelper<
    template <std::size_t ColIdx, typename End_t, typename... Its>
    void ExecLoop(unsigned int slot, End_t end, Its... its)
    {
-      auto *thisSlotH = fObjects[slot];
+      auto *thisSlotH = fObject;
       // loop increments all of the iterators while leaving scalars unmodified
       // TODO this could be simplified with fold expressions or std::apply in C++17
       auto nop = [](auto &&...) {};
@@ -192,7 +193,7 @@ public:
    SYCLFillHelper(const SYCLFillHelper &) = delete;
 
    // Initialize fSYCLHist
-   inline void init_cuda(HIST *obj, int i)
+   inline void init_sycl(HIST *obj, int i)
    {
       if (getenv("DBG"))
          printf("Init sycl hist %d\n", i);
@@ -221,28 +222,20 @@ public:
             printf("\tdim %d --- nbins: %d xlow: %f xhigh: %f\n", d, ncells[d], xlow[d], xhigh[d]);
       }
 
-      fSYCLHist[i] = new ROOT::Experimental::RHnSYCL<decltype(getHistType((HIST *)nullptr)), dim>(ncells, xlow, xhigh,
-                                                                                                  binEdges.data());
+      fSYCLHist = std::make_unique<SYCLHist_t>(ncells, xlow, xhigh, binEdges.data());
    }
 
    SYCLFillHelper(const std::shared_ptr<HIST> &h, const unsigned int nSlots)
-      : fObjects(nSlots, nullptr), fSYCLHist(nSlots, nullptr)
    {
-      fObjects[0] = h.get();
-      init_cuda(fObjects[0], 0);
-
-      // Initialize all other slots
-      for (unsigned int i = 1; i < nSlots; ++i) {
-         fObjects[i] = new HIST(*fObjects[0]);
-         UnsetDirectoryIfPossible(fObjects[i]);
-         init_cuda(fObjects[i], i);
-      }
+      // We ignore nSlots and just create one SYCLHist instance that handles the parallelization.
+      fObject = h.get();
+      init_sycl(fObject, 0);
    }
 
    void InitTask(TTreeReader *, unsigned int) {}
 
    template <typename... ValTypes, std::enable_if_t<!Disjunction<IsDataContainer<ValTypes>...>::value, int> = 0>
-   auto Exec(unsigned int slot, const ValTypes &...x) -> decltype(fObjects[slot]->Fill(x...), void())
+   auto Exec(unsigned int slot, const ValTypes &...x)
    {
       if constexpr (sizeof...(ValTypes) > dim)
          FillWithWeight<dim + 1>(slot, {((double)x)...});
@@ -250,12 +243,12 @@ public:
          FillWithoutWeight(slot, x...);
       return;
 
-      fObjects[slot]->Fill(x...);
+      fObject->Fill(x...);
    }
 
    // at least one container argument
    template <typename... Xs, std::enable_if_t<Disjunction<IsDataContainer<Xs>...>::value, int> = 0>
-   auto Exec(unsigned int slot, const Xs &...xs) -> decltype(fObjects[slot]->Fill(*MakeBegin(xs)...), void())
+   auto Exec(unsigned int slot, const Xs &...xs) -> decltype(fObject->Fill(*MakeBegin(xs)...), void())
    {
       // array of bools keeping track of which inputs are containers
       constexpr std::array<bool, sizeof...(Xs)> isContainer{IsDataContainer<Xs>::value...};
@@ -296,64 +289,53 @@ public:
    {
       double stats[13];
 
-      for (unsigned int i = 0; i < fObjects.size(); ++i) {
-         HIST *h = fObjects[i];
-         fSYCLHist[i]->RetrieveResults(h->GetArray(), stats);
-         h->SetStatsData(stats);
-         h->SetEntries(fSYCLHist[i]->GetEntries());
-         // printf("%d %d??\n", fObjects[i]->GetArray()->size(), fObjects[i]->GetXaxis()->GetNbins());
-         if (getenv("DBG")) {
-            printf("sycl stats:");
-            for (int j = 0; j < 13; j++) {
-               printf("%f ", stats[j]);
-            }
-            printf(" %f\n", fObjects[0]->GetEntries());
+      HIST *h = fObject;
+      fSYCLHist->RetrieveResults(h->GetArray(), stats);
+      h->SetStatsData(stats);
+      h->SetEntries(fSYCLHist->GetEntries());
+      // printf("%d %d??\n", fObjects[i]->GetArray()->size(), fObjects[i]->GetXaxis()->GetNbins());
+      if (getenv("DBG")) {
+         printf("sycl stats:");
+         for (int j = 0; j < 13; j++) {
+            printf("%f ", stats[j]);
          }
+         printf(" %f\n", fObject->GetEntries());
       }
 
       if (getenv("DBG")) {
-         fObjects[0]->GetStats(stats);
+         fObject->GetStats(stats);
          printf("stats:");
          for (int j = 0; j < 13; j++) {
             printf("%f ", stats[j]);
          }
-         printf(" %f\n", fObjects[0]->GetEntries());
+         printf(" %f\n", fObject->GetEntries());
          if (getenv("DBG") && atoi(getenv("DBG")) > 1) {
 
             printf("histogram:");
-            for (int j = 0; j < fObjects[0]->GetNcells(); ++j) {
-               printf("%f ", fObjects[0]->GetArray()[j]);
+            for (int j = 0; j < fObject->GetNcells(); ++j) {
+               printf("%f ", fObject->GetArray()[j]);
             }
             printf("\n");
          }
       }
-
-      if (fObjects.size() == 1)
-         return;
-
-      Merge(fObjects, /*toselectcorrectoverload=*/0);
-
-      // delete the copies we created for the slots other than the first
-      for (auto it = ++fObjects.begin(); it != fObjects.end(); ++it)
-         delete *it;
    }
 
    HIST &PartialUpdate(unsigned int slot)
    {
-      return *fObjects[slot];
+      return *fObject;
    }
 
    // Helper functions for RMergeableValue
    std::unique_ptr<RMergeableValueBase> GetMergeableValue() const final
    {
-      return std::make_unique<RMergeableFill<HIST>>(*fObjects[0]);
+      return std::make_unique<RMergeableFill<HIST>>(*fObject);
    }
 
    // if the fObjects vector type is derived from TObject, return the name of the object
    template <typename T = HIST, std::enable_if_t<std::is_base_of<TObject, T>::value, int> = 0>
    std::string GetActionName()
    {
-      return std::string(fObjects[0]->IsA()->GetName()) + "\\n" + std::string(fObjects[0]->GetName());
+      return std::string(fObject->IsA()->GetName()) + "\\n" + std::string(fObject->GetName());
    }
 
    // if fObjects is not derived from TObject, indicate it is some other object
@@ -369,7 +351,7 @@ public:
       auto &result = *static_cast<std::shared_ptr<H> *>(newResult);
       ResetIfPossible(result.get());
       UnsetDirectoryIfPossible(result.get());
-      return SYCLFillHelper(result, fObjects.size());
+      return SYCLFillHelper(result, 1);
    }
 };
 
