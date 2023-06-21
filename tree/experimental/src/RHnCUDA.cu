@@ -19,14 +19,14 @@ __device__ inline int FindFixBin(double x, const double *binEdges, int nBins, do
    int bin;
 
    // OPTIMIZATION: can this be done with less branching?
-   if (x < xMin) {           // underflow
+   if (x < xMin) { // underflow
       bin = 0;
    } else if (!(x < xMax)) { // overflow  (note the way to catch NaN)
       bin = nBins + 1;
    } else {
       if (binEdges == NULL) { // fix bins
          bin = 1 + int(nBins * (x - xMin) / (xMax - xMin));
-      } else {                // variable bin sizes
+      } else { // variable bin sizes
          bin = 1 + CUDAHelpers::BinarySearch(nBins + 1, binEdges, x);
       }
    }
@@ -91,23 +91,23 @@ __device__ inline void AddBinContent(short *histogram, int bin, double weight)
       assumed = old;
 
       if ((size_t)addr & 2) {
-         newVal = (assumed >> 16) + (int)weight;                    // extract short from upper 16 bits
-         overwrite = assumed & 0x0000ffff;                          // clear upper 16 bits
+         newVal = (assumed >> 16) + (int)weight; // extract short from upper 16 bits
+         overwrite = assumed & 0x0000ffff;       // clear upper 16 bits
          if (newVal > -32768 && newVal < 32768)
-            overwrite |= (newVal << 16);                            // Set upper 16 bits to newVal
+            overwrite |= (newVal << 16); // Set upper 16 bits to newVal
          else if (newVal < -32767)
-            overwrite |= 0x80010000;                                // Set upper 16 bits to min short (-32767)
+            overwrite |= 0x80010000; // Set upper 16 bits to min short (-32767)
          else
-            overwrite |= 0x7fff0000;                                // Set upper 16 bits to max short (32767)
+            overwrite |= 0x7fff0000; // Set upper 16 bits to max short (32767)
       } else {
          newVal = (((assumed & 0xffff) << 16) >> 16) + (int)weight; // extract short from lower 16 bits + sign extend
          overwrite = assumed & 0xffff0000;                          // clear lower 16 bits
          if (newVal > -32768 && newVal < 32768)
-            overwrite |= (newVal & 0xffff);                         // Set lower 16 bits to newVal
+            overwrite |= (newVal & 0xffff); // Set lower 16 bits to newVal
          else if (newVal < -32767)
-            overwrite |= 0x00008001;                                // Set lower 16 bits to min short (-32767)
+            overwrite |= 0x00008001; // Set lower 16 bits to min short (-32767)
          else
-            overwrite |= 0x00007fff;                                // Set lower 16 bits to max short (32767)
+            overwrite |= 0x00007fff; // Set lower 16 bits to max short (32767)
       }
 
       old = atomicCAS(addrInt, assumed, overwrite);

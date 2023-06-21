@@ -13,6 +13,7 @@ template <typename T, unsigned int Dim, unsigned int WGroupSize = 256>
 class RHnSYCL {
    // B = SYCL buffer
    // S = SYCL USM shared pointer
+   // D = SYCL USM dev8ice pointer
 
    // clang-format off
    sycl::queue                                     queue;
@@ -29,7 +30,10 @@ class RHnSYCL {
 
    int                                             fEntries;           ///< Number of entries that have been filled.
    const int                                       kNStats;            ///< Number of statistics.
+   std::optional<sycl::buffer<double, 1>>          fBStats;            ///< Pointer to statistics array on GPU.
+   std::optional<sycl::buffer<double, 1>>          fBIntermediateStats;///< Pointer to statistics array on GPU.
    double                                         *fSStats;            ///< Pointer to statistics array on GPU.
+   double                                         *fDIntermediateStats;///< Pointer to statistics array on GPU.
 
    // Kernel size parameters
    unsigned int                                    fNumBlocks;         ///< Number of blocks used in SYCL kernels
@@ -47,6 +51,8 @@ public:
 
    ~RHnSYCL()
    {
+      sycl::free(fSStats, queue);
+      sycl::free(fDIntermediateStats, queue);
       if (fSBinEdges != NULL) {
          sycl::free(fSBinEdges, queue);
       }

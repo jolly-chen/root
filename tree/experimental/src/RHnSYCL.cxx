@@ -96,7 +96,7 @@ inline void AddBinContent(AccHistRW<short> histogram, int bin, double weight)
    bool success = false;
 
    do {
-      assumed = histogram[bin];
+      assumed = *addrInt;
 
       if ((size_t)addr & 2) {
          newVal = (assumed >> 16) + (int)weight; // extract short from upper 16 bits
@@ -118,7 +118,7 @@ inline void AddBinContent(AccHistRW<short> histogram, int bin, double weight)
             overwrite |= 0x00007fff; // Set lower 16 bits to max short (32767)
       }
 
-      auto atomic = sycl::atomic_ref<int, sycl::memory_order::relaxed, sycl::memory_scope::device, Space>(*addrInt);
+      auto atomic = sycl::atomic_ref<int, sycl::memory_order::relaxed, sycl::memory_scope::device, Space>(addrInt[0]);
       success = atomic.compare_exchange_strong(assumed, overwrite);
    } while (!success);
 }
@@ -253,7 +253,7 @@ private:
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<double, Dim> xlow,
                                      std::array<double, Dim> xhigh, const double **binEdges)
-   : queue(sycl::default_selector{}, SYCLHelpers::exception_handler),
+   : queue(sycl::cpu_selector{}, SYCLHelpers::exception_handler),
      kNStats([]() {
         // Sum of weights (squared) + sum of weight * bin (squared) per axis + sum of weight * binAx1 * binAx2 for
         // all axis combinations
@@ -265,7 +265,7 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
    if (getenv("DBG"))
       std::cout << "Running SYCLHist on " << device.template get_info<sycl::info::device::name>() << "\n";
 
-   fBufferSize = 10000;
+   fBufferSize = 2;
    fNbins = 1;
    fEntries = 0;
 
@@ -305,6 +305,11 @@ RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<dou
    SYCLHelpers::InitializeToZero(queue, *fBHistogram, fNbins);
 
    fSStats = (double *)sycl::malloc_shared(kNStats * sizeof(double), queue);
+   fDIntermediateStats = (double *)sycl::malloc_shared(kNStats * sizeof(double), queue);
+
+   fBStats = sycl::buffer<double, 1>(sycl::range<1>(kNStats));
+   fBIntermediateStats = sycl::buffer<double, 1>(sycl::range<1>(kNStats));
+   SYCLHelpers::InitializeToZero(queue, *fBStats, kNStats);
 
    // Initialize BinEdges buffer.
    fSBinEdges = NULL;
@@ -324,7 +329,6 @@ template <typename T, unsigned int Dim, unsigned int WGroupSize>
 void RHnSYCL<T, Dim, WGroupSize>::Fill(const std::array<double, Dim> &coords, double w)
 {
    auto bufferIdx = fEntries % fBufferSize;
-   fEntries++;
 
    {
       sycl::host_accessor coordsAcc{*fBCoords, sycl::range<1>(Dim), sycl::id{bufferIdx * Dim}, sycl::write_only,
@@ -339,7 +343,8 @@ void RHnSYCL<T, Dim, WGroupSize>::Fill(const std::array<double, Dim> &coords, do
 
    // Only execute when a certain number of values are buffered to increase the GPU workload and decrease the
    // frequency of kernel launches.
-   if (bufferIdx == fBufferSize) {
+   fEntries++;
+   if (fEntries % fBufferSize == 0) {
       ExecuteSYCLHisto();
    }
 }
@@ -369,8 +374,9 @@ void RHnSYCL<T, Dim, WGroupSize>::GetStats(unsigned int size)
    queue.submit([&](sycl::handler &cgh) {
       sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
 
-      auto GetSumW = sycl::reduction(&fSStats[0], sycl::plus<double>());
-      auto GetSumW2 = sycl::reduction(&fSStats[1], sycl::plus<double>());
+      // sycl::accessor statsAcc{*fBIntermediateStats, cgh, sycl::write_only};
+      auto GetSumW = sycl::reduction(&fDIntermediateStats[0], sycl::plus<double>());
+      auto GetSumW2 = sycl::reduction(&fDIntermediateStats[1], sycl::plus<double>());
 
       cgh.parallel_for(sycl::range<1>(size), GetSumW, GetSumW2, [=](sycl::id<1> id, auto &sumw, auto &sumw2) {
          sumw += weightsAcc[id];
@@ -385,9 +391,9 @@ void RHnSYCL<T, Dim, WGroupSize>::GetStats(unsigned int size)
          sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
 
          // Multiply weight with coordinate of current axis. E.g., for Dim = 2 this computes Tsumwx and Tsumwy
-         auto GetSumWAxis = sycl::reduction(&fSStats[offset++], sycl::plus<double>());
+         auto GetSumWAxis = sycl::reduction(&fDIntermediateStats[offset++], sycl::plus<double>());
          // Squares coodinate per axis. E.g., for Dim = 2 this computes Tsumwx2 and Tsumwy2
-         auto GetSumWAxis2 = sycl::reduction(&fSStats[offset++], sycl::plus<double>());
+         auto GetSumWAxis2 = sycl::reduction(&fDIntermediateStats[offset++], sycl::plus<double>());
 
          cgh.parallel_for(sycl::range<1>(size), GetSumWAxis, GetSumWAxis2,
                           [=](sycl::id<1> id, auto &sumwaxis, auto &sumwaxis2) {
@@ -401,8 +407,9 @@ void RHnSYCL<T, Dim, WGroupSize>::GetStats(unsigned int size)
             sycl::accessor coordsAcc{*fBCoords, cgh, sycl::range<1>(size * Dim), sycl::read_only};
             sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
 
-            // Multiplies coordinate of current axis with the "previous" axis. E.g., for Dim = 2 this computes Tsumwxy
-            auto GetSumWAxisAxis = sycl::reduction(&fSStats[offset++], sycl::plus<double>());
+            // Multiplies coordinate of current axis with the "previous" axis. E.g., for Dim = 2 this computes
+            // Tsumwxy
+            auto GetSumWAxisAxis = sycl::reduction(&fDIntermediateStats[offset++], sycl::plus<double>());
 
             cgh.parallel_for(sycl::range<1>(size), GetSumWAxisAxis, [=](sycl::id<1> id, auto &sumwaxisaxis) {
                sumwaxisaxis += weightsAcc[id] * coordsAcc[id * Dim + d] * coordsAcc[id * Dim + prev_d];
@@ -410,12 +417,20 @@ void RHnSYCL<T, Dim, WGroupSize>::GetStats(unsigned int size)
          });
       }
    }
+
+   // The sycl reduction interface overwrites the output array so we have to add the values to the previously
+   // reduced values.
+   queue.wait();
+   queue.submit([&](sycl::handler &cgh) {
+      sycl::accessor statsAcc{*fBStats, cgh, sycl::write_only};
+      cgh.parallel_for(sycl::range<1>(kNStats), [=](sycl::id<1> id) { statsAcc[id] += fDIntermediateStats[id]; });
+   });
 }
 
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 void RHnSYCL<T, Dim, WGroupSize>::ExecuteSYCLHisto()
 {
-   unsigned int size = fmin(fBufferSize, fEntries % fBufferSize);
+   unsigned int size = (fEntries - 1) % fBufferSize + 1;
 
    if (fHistoSmemSize > fMaxSmemSize) {
       queue.submit([&](sycl::handler &cgh) {
@@ -441,6 +456,8 @@ void RHnSYCL<T, Dim, WGroupSize>::ExecuteSYCLHisto()
          sycl::accessor weightsAcc{*fBWeights, cgh, sycl::range<1>(size), sycl::read_only};
          sycl::accessor coordsAcc{*fBCoords, cgh, sycl::range<1>(size * Dim), sycl::read_only};
          sycl::accessor binsAcc{*fBBins, cgh, sycl::range<1>(size * Dim), sycl::write_only, sycl::no_init};
+
+         // Global range must be a multiple of local range (WGroupSize) that is equal or larger than local range.
          auto execution_range = sycl::nd_range<1>{sycl::range<1>{((size + WGroupSize - 1) / WGroupSize) * WGroupSize},
                                                   sycl::range<1>{WGroupSize}};
 
@@ -459,12 +476,10 @@ void RHnSYCL<T, Dim, WGroupSize>::RetrieveResults(T *histResult, double *statsRe
    if (fEntries % fBufferSize != 0) {
       ExecuteSYCLHisto();
    }
-   queue.copy(sycl::accessor{*fBHistogram, sycl::read_only}, histResult);
-   queue.wait();
 
-   for (int i = 0; i < kNStats; i++) {
-      statsResult[i] = fSStats[i];
-   }
+   queue.copy(sycl::accessor{*fBHistogram, sycl::read_only}, histResult);
+   queue.copy(sycl::accessor{*fBStats, sycl::read_only}, statsResult);
+   queue.wait();
 }
 
 #include "RHnSYCL-impl.cxx"
