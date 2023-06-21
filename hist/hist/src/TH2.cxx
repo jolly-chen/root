@@ -1263,12 +1263,10 @@ void TH2::GetStats(Double_t *stats) const
 #if defined(ROOT_RDF_CUDA) || defined(ROOT_RDF_SYCL)
 void TH2::SetStatsData(Double_t *stats)
 {
-   if (getenv("CUDA_HIST")) {
-      TH1::SetStatsData(stats);
-      fTsumwy = stats[4];
-      fTsumwy2 = stats[5];
-      fTsumwxy = stats[6];
-   }
+   TH1::SetStatsData(stats);
+   fTsumwy = stats[4];
+   fTsumwy2 = stats[5];
+   fTsumwxy = stats[6];
 }
 #endif
 

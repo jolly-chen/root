@@ -19,7 +19,7 @@ struct HistProperties {
    double *stats;
    int nStats;
 
-   HistProperties(ROOT::RDF::RResultPtr<HIST> h)
+   HistProperties(ROOT::RDF::RResultPtr<HIST> &h)
    {
       dim = h->GetDimension();
       nStats = 2 + 2 * dim;
@@ -28,11 +28,11 @@ struct HistProperties {
       nCells = h->GetNcells();
 
       // Create a copy in case the array gets cleaned up by RDataframe before checking the results
-      array = (T*) malloc(nCells * sizeof(T));
+      array = (T *)malloc(nCells * sizeof(T));
       auto histogram = h->GetArray();
       std::copy(histogram, histogram + nCells, array);
 
-      stats = (double *)malloc(nStats * sizeof(double));
+      stats = (double *)calloc(nStats, sizeof(double));
       h->GetStats(stats);
    }
 
@@ -52,7 +52,7 @@ protected:
 
    HistoTestFixture1D()
    {
-      numRows = 3;
+      numRows = 42;
       numBins = numRows - 2; // -2 to also test filling u/overflow.
       startBin = 0;
       startFill = startBin - 1;
