@@ -266,7 +266,7 @@ private:
 template <typename T, unsigned int Dim, unsigned int WGroupSize>
 RHnSYCL<T, Dim, WGroupSize>::RHnSYCL(std::array<int, Dim> ncells, std::array<double, Dim> xlow,
                                      std::array<double, Dim> xhigh, const double **binEdges)
-   : queue(sycl::gpu_selector{}, SYCLHelpers::exception_handler),
+   : queue(sycl::default_selector{}, SYCLHelpers::exception_handler),
      kNStats([]() {
         // Sum of weights (squared) + sum of weight * bin (squared) per axis + sum of weight * binAx1 * binAx2 for
         // all axis combinations

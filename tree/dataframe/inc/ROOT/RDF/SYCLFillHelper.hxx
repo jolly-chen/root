@@ -31,9 +31,15 @@
 #include <string>
 #include <array>
 
+using ROOT::Internal::RDF::Disjunction;
+using ROOT::Internal::RDF::GetNthElement;
+using ROOT::Internal::RDF::IsDataContainer;
+using ROOT::Internal::RDF::RActionImpl;
+using ROOT::Internal::RDF::RMergeableFill;
+using ROOT::Internal::RDF::RMergeableValueBase;
+
 namespace ROOT {
-namespace Internal {
-namespace RDF {
+namespace Experimental {
 using Hist_t = ::TH1D;
 
 template <typename HIST = Hist_t>
@@ -355,7 +361,6 @@ public:
    }
 };
 
-} // namespace RDF
-} // namespace Internal
+} // namespace Experimental
 } // namespace ROOT
 #endif

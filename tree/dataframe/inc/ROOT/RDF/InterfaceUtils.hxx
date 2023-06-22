@@ -157,7 +157,7 @@ BuildAction(const ColumnNames_t &bl, const std::shared_ptr<ActionResultType> &h,
    if constexpr (has_getxaxis_v<ActionResultType>) {
 #ifdef ROOT_RDF_SYCL
       if (getenv("SYCL_HIST")) {
-         using Helper_t = ROOT::Internal::RDF::SYCLFillHelper<ActionResultType>;
+         using Helper_t = ROOT::Experimental::SYCLFillHelper<ActionResultType>;
          using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
          return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
       }
@@ -165,7 +165,7 @@ BuildAction(const ColumnNames_t &bl, const std::shared_ptr<ActionResultType> &h,
 
 #ifdef ROOT_RDF_CUDA
       if (getenv("CUDA_HIST")) {
-         using Helper_t = ROOT::Internal::RDF::CUDAFillHelper<ActionResultType>;
+         using Helper_t = ROOT::Experimental::CUDAFillHelper<ActionResultType>;
          using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
          return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
       }
@@ -187,7 +187,7 @@ BuildAction(const ColumnNames_t &bl, const std::shared_ptr<::TH1D> &h, const uns
 
 #ifdef ROOT_RDF_SYCL
    if (getenv("SYCL_HIST")) {
-      using Helper_t = ROOT::Internal::RDF::SYCLFillHelper<TH1D>;
+      using Helper_t = ROOT::Experimental::SYCLFillHelper<TH1D>;
       using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
       return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
    }
@@ -195,7 +195,7 @@ BuildAction(const ColumnNames_t &bl, const std::shared_ptr<::TH1D> &h, const uns
 
 #ifdef ROOT_RDF_CUDA
    if (getenv("CUDA_HIST")) {
-      using Helper_t = ROOT::Internal::RDF::CUDAFillHelper<::TH1D>;
+      using Helper_t = ROOT::Experimental::CUDAFillHelper<::TH1D>;
       using Action_t = RAction<Helper_t, PrevNodeType, TTraits::TypeList<ColTypes...>>;
       return std::make_unique<Action_t>(Helper_t(h, nSlots), bl, std::move(prevNode), colRegister);
    }
