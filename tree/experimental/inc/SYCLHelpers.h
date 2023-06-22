@@ -37,11 +37,7 @@ class InitializeToZeroTask {
 public:
    InitializeToZeroTask(Acc _acc) : acc(_acc) {}
 
-   void operator()(sycl::item<1> item) const
-   {
-      size_t id = item.get_linear_id();
-      acc[id] = 0;
-   }
+   void operator()(sycl::id<1> id) const { acc[id] = 0; }
 
 private:
    Acc acc;
@@ -95,17 +91,18 @@ template <class T>
 void PrintArray(sycl::queue &queue, T arr, size_t n)
 {
    try {
-      queue.submit([&](sycl::handler &cgh) {
-         sycl::stream out(1024, 256, cgh);
-         auto acc = arr->template get_access<sycl::access::mode::read>(cgh);
-         cgh.single_task([=]() {
-            for (auto i = 0U; i < n; i++) {
-               out << acc[i] << " ";
-            }
-            out << "\n";
-         });
-      });
-      queue.wait_and_throw();
+      queue
+         .submit([&](sycl::handler &cgh) {
+            sycl::stream out(1024, 256, cgh);
+            auto acc = arr->template get_access<sycl::access::mode::read>(cgh);
+            cgh.single_task([=]() {
+               for (auto i = 0U; i < n; i++) {
+                  out << acc[i] << " ";
+               }
+               out << "\n";
+            });
+         })
+         .wait_and_throw();
    } catch (sycl::exception const &e) {
       std::cout << "Caught synchronous SYCL exception:\n" << e.what() << std::endl;
    }
@@ -115,11 +112,12 @@ template <class T>
 void PrintVar(sycl::queue &queue, T &var)
 {
    try {
-      queue.submit([&](sycl::handler &cgh) {
-         sycl::stream out(1024, 256, cgh);
-         cgh.single_task([=]() { out << var << "\n"; });
-      });
-      queue.wait_and_throw();
+      queue
+         .submit([&](sycl::handler &cgh) {
+            sycl::stream out(1024, 256, cgh);
+            cgh.single_task([=]() { out << var << "\n"; });
+         })
+         .wait_and_throw();
    } catch (sycl::exception const &e) {
       std::cout << "Caught synchronous SYCL exception:\n" << e.what() << std::endl;
    }

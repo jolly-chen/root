@@ -22,7 +22,7 @@ class RHnSYCL {
    int                                             fNbins;             ///< Total number of bins in the histogram WITH under/overflow
 
    std::optional<sycl::buffer<AxisDescriptor, 1>>  fBAxes;             ///< Vector of Dim axis descriptors
-   double                                         *fSBinEdges;         ///< Binedges per axis for non-fixed bins. TODO: remove binedges from AxisDescriptor
+   double                                         *fDBinEdges;         ///< Binedges per axis for non-fixed bins. TODO: remove binedges from AxisDescriptor
 
    std::optional<sycl::buffer<double, 1>>          fBCoords;           ///< 1D buffer with bufferSize #Dim-dimensional coordinates to fill.
    std::optional<sycl::buffer<double, 1>>          fBWeights;          ///< Buffer of weigths for each bin on the Host.
@@ -31,8 +31,6 @@ class RHnSYCL {
    int                                             fEntries;           ///< Number of entries that have been filled.
    const int                                       kNStats;            ///< Number of statistics.
    std::optional<sycl::buffer<double, 1>>          fBStats;            ///< Pointer to statistics array on GPU.
-   std::optional<sycl::buffer<double, 1>>          fBIntermediateStats;///< Pointer to statistics array on GPU.
-   double                                         *fSStats;            ///< Pointer to statistics array on GPU.
    double                                         *fDIntermediateStats;///< Pointer to statistics array on GPU.
 
    // Kernel size parameters
@@ -51,10 +49,9 @@ public:
 
    ~RHnSYCL()
    {
-      sycl::free(fSStats, queue);
       sycl::free(fDIntermediateStats, queue);
-      if (fSBinEdges != NULL) {
-         sycl::free(fSBinEdges, queue);
+      if (fDBinEdges != NULL) {
+         sycl::free(fDBinEdges, queue);
       }
    }
 
