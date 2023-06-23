@@ -133,19 +133,6 @@ struct HistoUtils<T, false> {
    static bool HasAxisLimits(T &) { return true; }
 };
 
-template <class T>
-struct has_getxaxis {
-   static std::false_type test(...);
-
-   template <class U>
-   static auto test(U) -> decltype(std::declval<U>().GetXaxis(), std::true_type{});
-
-   static constexpr bool value = decltype(test(std::declval<T>()))::value;
-};
-
-template <class T>
-constexpr bool has_getxaxis_v = has_getxaxis<T>::value;
-
 // Generic filling (covers Histo2D, Histo3D, HistoND, Profile1D and Profile2D actions, with and without weights)
 template <typename... ColTypes, typename ActionTag, typename ActionResultType, typename PrevNodeType>
 std::unique_ptr<RActionBase>
@@ -154,7 +141,8 @@ BuildAction(const ColumnNames_t &bl, const std::shared_ptr<ActionResultType> &h,
 {
    // Avoid compilation errors for custom objects for which the dimension is unknown, like CustomFiller in
    // tree/dataframe/test/datagframe_helpers.cxx
-   if constexpr (has_getxaxis_v<ActionResultType>) {
+   if constexpr (std::is_same<ActionTag, ActionTags::Histo2D>::value ||
+                 std::is_same<ActionTag, ActionTags::Histo3D>::value) {
 #ifdef ROOT_RDF_SYCL
       if (getenv("SYCL_HIST")) {
          using Helper_t = ROOT::Experimental::SYCLFillHelper<ActionResultType>;
