@@ -11,6 +11,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/copy.h>
+#include <thrust/device_free.h>
 
 #include <array>
 #include <vector>
@@ -35,6 +36,20 @@ struct RHnCUDA<T, Dim, BlockSize>::DevicePointers {
 
    thrust::device_ptr<double> fIntermediateStats; ///< Buffer for storing intermediate results of stat reduction on GPU.
    thrust::device_ptr<double> fStats;             ///< Pointer to statistics array on GPU
+
+   ~DevicePointers() {
+      thrust::device_free(fHistogram);
+      thrust::device_free(fNBinsAxis);
+      thrust::device_free(fMin);
+      thrust::device_free(fMax);
+      thrust::device_free(fBinEdgesIdx);
+      thrust::device_free(fCoords);
+      thrust::device_free(fWeights);
+      thrust::device_free(fMask);
+      thrust::device_free(fIntermediateStats);
+      thrust::device_free(fStats);
+      if (fBinEdges != NULL) thrust::device_free(fBinEdges);
+   }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -262,7 +277,7 @@ RHnCUDA<T, Dim, BlockSize>::RHnCUDA(std::size_t maxBulkSize, const std::size_t n
       thrust::copy(binEdges.begin(), binEdges.end(), devPtrs->fBinEdges);
    }
 
-   // // // Allocate and initialize device memory for the histogram and statistics.
+   // Allocate and initialize device memory for the histogram and statistics.
    devPtrs->fHistogram = thrust::device_malloc<T>(fNBins);
    // devPtrs->fStats = thrust::device_malloc<double>(kNStats);
    // devPtrs->fIntermediateStats = thrust::device_malloc<double>(kNStats);
@@ -278,24 +293,6 @@ RHnCUDA<T, Dim, BlockSize>::RHnCUDA(std::size_t maxBulkSize, const std::size_t n
    if (getenv("DBG")) {
       printf("Maximum shared memory size: %zu\n", fMaxSmemSize);
    }
-}
-
-template <typename T, unsigned int Dim, unsigned int BlockSize>
-RHnCUDA<T, Dim, BlockSize>::~RHnCUDA()
-{
-   // ERRCHECK(cudaFree(devPtrs->fHistogram));
-   // ERRCHECK(cudaFree(devPtrs->fNBinsAxis));
-   // ERRCHECK(cudaFree(devPtrs->fMin));
-   // ERRCHECK(cudaFree(devPtrs->fMax));
-   // ERRCHECK(cudaFree(devPtrs->fBinEdgesIdx));
-   // ERRCHECK(cudaFree(devPtrs->fCoords));
-   // ERRCHECK(cudaFree(devPtrs->fWeights));
-   // ERRCHECK(cudaFree(devPtrs->fMask));
-   // ERRCHECK(cudaFree(devPtrs->fStats));
-   // ERRCHECK(cudaFree(devPtrs->fIntermediateStats));
-   // if (devPtrs->fBinEdges != NULL) {
-   //    ERRCHECK(cudaFree(devPtrs->fBinEdges));
-   // // }
 }
 
 template <typename T, unsigned int Dim, unsigned int BlockSize>

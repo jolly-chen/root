@@ -16,7 +16,7 @@ private:
    static constexpr int kNStats = 2 + Dim * 2 + Dim * (Dim - 1) / 2; ///< Number of statistics.
 
    // T                                *fDHistogram;         ///< Pointer to histogram buffer on the GPU.
-   int                               fNBins;              ///< Total number of bins in the histogram WITH under/overflow
+   int                               fNBins;                 ///< Total number of bins in the histogram WITH under/overflow
 
    // int                              *fDNBinsAxis;         ///< Number of bins(1D) WITH u/overflow per axis
    // double                           *fDMin;               ///< Low edge of first bin per axis
@@ -34,17 +34,17 @@ private:
    // double                           *fDWeights;           ///< Pointer to array of weights on the GPU.
    // int                              *fDBins;              ///< Pointer to array of bins (corresponding to the coordinates) to fill on the GPU.
 
-   int                               fEntries;            ///< Number of entries that have been filled.
+   int                               fEntries;               ///< Number of entries that have been filled.
    // double                           *fDIntermediateStats; ///< Buffer for storing intermediate results of stat reduction on GPU.
    // double                           *fDStats;             ///< Pointer to statistics array on GPU.
-   std::vector<double>               fStats;             ///< Pointer to statistics array on GPU.
+   std::vector<double>               fStats;                 ///< Pointer to statistics array on GPU.
 
    // Kernel size parameters
-   unsigned int                      fNumBlocks;          ///< Number of blocks used in CUDA kernels
-   std::size_t                       fMaxBulkSize;         ///< Number of coordinates to buffer.
-   std::size_t                       fMaxSmemSize;        ///< Maximum shared memory size per block on device 0.
-   std::size_t                       kStatsSmemSize;      ///< Size of shared memory per block in GetStatsKernel
-   std::size_t                       fHistoSmemSize;      ///< Size of shared memory per block in HistoKernel
+   unsigned int                      fNumBlocks;             ///< Number of blocks used in CUDA kernels
+   std::size_t                       fMaxBulkSize;           ///< Number of coordinates to buffer.
+   std::size_t                       fMaxSmemSize;           ///< Maximum shared memory size per block on device 0.
+   std::size_t                       kStatsSmemSize;         ///< Size of shared memory per block in GetStatsKernel
+   std::size_t                       fHistoSmemSize;         ///< Size of shared memory per block in HistoKernel
    // clang-format on
 
    struct DevicePointers;
