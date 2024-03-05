@@ -22,6 +22,7 @@
 #include <ROOT/RDF/RAction.hxx>
 #include "ROOT/RDF/RActionImpl.hxx"
 #include "ROOT/RDF/Utils.hxx"
+#include "RCUDAContext.hxx"
 #include "RHnCUDA.h"
 #include "TH1.h"
 #include "TH2.h"
@@ -74,6 +75,9 @@ class R__CLING_PTRCHECK(off) CUDAFillHelper : public RActionImpl<CUDAFillHelper<
    HIST *fObject;
    std::unique_ptr<CUDAHist_t> fCUDAHist;
 
+   // CUDA stream to process the current bulk on.
+   int fStream;
+
    template <typename H = HIST, typename = decltype(std::declval<H>().Reset())>
    void ResetIfPossible(H *h)
    {
@@ -120,9 +124,9 @@ class R__CLING_PTRCHECK(off) CUDAFillHelper : public RActionImpl<CUDAFillHelper<
       (maskedInsert(x, Is < dim ? coords : weights), ...);
 
       if constexpr (sizeof...(ValTypes) > dim)
-         fCUDAHist->Fill(coords, weights);
+         fCUDAHist->Fill(fStream, coords, weights);
       else
-         fCUDAHist->Fill(coords);
+         fCUDAHist->Fill(fStream, coords);
    }
 
    // Merge overload for types with Merge(TCollection*), like TH1s
@@ -264,7 +268,7 @@ public:
       fCUDAHist = std::make_unique<CUDAHist_t>(maxBulkSize, numBins, ncells, xlow, xHigh, binEdges, binEdgesIdx);
    }
 
-   CUDAFillHelper(const std::shared_ptr<HIST> &h, std::size_t maxBulkSize)
+   CUDAFillHelper(const std::shared_ptr<HIST> &h, std::size_t maxBulkSize) : fStream(0)
    {
       // We ignore nSlots and just create one CUDAHist instance that handles the parallelization.
       fObject = h.get();
@@ -341,7 +345,7 @@ public:
       double stats[13];
 
       HIST *h = fObject;
-      fCUDAHist->RetrieveResults(h->GetArray(), stats);
+      fCUDAHist->RetrieveResults(fStream, h->GetArray(), stats);
       h->PutStats(stats);
       h->SetEntries(fCUDAHist->GetEntries());
 

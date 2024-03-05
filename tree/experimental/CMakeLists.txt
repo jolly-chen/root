@@ -10,7 +10,9 @@
 ############################################################################
 
 if (cuda)
-  ROOT_LINKER_LIBRARY(CUDAHist src/RHnCUDA.cu TYPE SHARED DEPENDENCIES MathCore ROOTVecOps)
+  ROOT_LINKER_LIBRARY(CUDAHist src/RHnCUDA.cu src/RCUDAContext.cu
+                      TYPE SHARED
+                      DEPENDENCIES MathCore ROOTVecOps)
   target_compile_options(CUDAHist PRIVATE -rdc=true -lineinfo --expt-relaxed-constexpr)
   set_target_properties(CUDAHist PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
   target_compile_definitions(CUDAHist INTERFACE ROOT_RDF_CUDA)

@@ -1,6 +1,8 @@
 #include "RHnCUDA.h"
 
 #include "CUDAHelpers.cuh"
+#include "RCUDAContext.hxx"
+
 #include "TError.h"
 #include "TMath.h"
 #include "ROOT/RVec.hxx"
@@ -18,11 +20,6 @@
 
 namespace ROOT {
 namespace Experimental {
-
-template <typename T, unsigned int Dim, unsigned int BlockSize>
-struct RHnCUDA<T, Dim, BlockSize>::CUDAProps {
-   cudaDeviceProp props;
-};
 
 ////////////////////////////////////////////////////////////////////////////////
 /// CUDA kernels
@@ -57,9 +54,8 @@ __device__ inline int GetBin(size_t tid, double *binEdges, int *binEdgesIdx, int
       auto binD = FindFixBin(x[tid], binEdges, binEdgesIdx[d], nBinsAxis[d] - 2, xMin[d], xMax[d]);
       mask[tid] *= binD > 0 && binD < nBinsAxis[d] - 1;
 
-      // if (binD < 0) {
+      // if (binD < 0)
       //    return -1;
-      // }
 
       bin = bin * nBinsAxis[d] + binD;
    }
@@ -184,7 +180,7 @@ __global__ void HistogramGlobal(T *histogram, double *binEdges, int *binEdgesIdx
    for (auto i = tid; i < bulkSize; i += stride) {
       auto bin = GetBin<Dim>(i, binEdges, binEdgesIdx, nBinsAxis, xMin, xMax, coords, bulkSize, mask);
       // if (bin >= 0)
-      AddBinContent<T>(histogram, bin, weights[i]);
+         AddBinContent<T>(histogram, bin, weights[i]);
    }
 }
 
@@ -211,12 +207,12 @@ RHnCUDA<T, Dim, BlockSize>::RHnCUDA(std::size_t maxBulkSize, const std::size_t n
                                     const std::array<int, Dim> &nBinsAxis, const std::array<double, Dim> &xLow,
                                     const std::array<double, Dim> &xHigh, const std::vector<double> &binEdges,
                                     const std::array<int, Dim> &binEdgesIdx)
-   : kStatsSmemSize((BlockSize <= 32) ? 2 * BlockSize * sizeof(double) : BlockSize * sizeof(double))
+   : kStatsSmemSize((BlockSize <= 32) ? 2 * BlockSize * sizeof(double) : BlockSize * sizeof(double)),
+     fCtx(RCUDAContext::instance())
 {
    fMaxBulkSize = maxBulkSize;
    fNBins = nBins;
    fEntries = 0;
-   fProps = std::make_unique<CUDAProps>();
 
    // Setup device memory for filling the histogram.
    ERRCHECK(cudaMalloc((void **)&fDCoords, Dim * fMaxBulkSize * sizeof(double)));
@@ -246,11 +242,14 @@ RHnCUDA<T, Dim, BlockSize>::RHnCUDA(std::size_t maxBulkSize, const std::size_t n
    ERRCHECK(cudaMemset(fDStats, 0, kNStats * sizeof(double)));
    ERRCHECK(cudaMalloc((void **)&fDIntermediateStats, kMaxBlocks * kNStats * sizeof(double)));
 
-   ERRCHECK(cudaGetDeviceProperties(&fProps->props, 0));
    fHistoSmemSize = fNBins * sizeof(T);
 
+   // TODO: Allocate and transfer together?
+   ERRCHECK(cudaMallocHost((void **)&fHCoords, Dim * maxBulkSize * sizeof(double)));
+   ERRCHECK(cudaMallocHost((void **)&fHWeights, maxBulkSize * sizeof(double)));
+
    if (getenv("DBG")) {
-      printf("Maximum shared memory size: %zu\n", fProps->props.sharedMemPerBlock);
+      printf("Maximum shared memory size: %d\n", fCtx.GetMaxSMem());
    }
 }
 
@@ -273,23 +272,27 @@ RHnCUDA<T, Dim, BlockSize>::~RHnCUDA()
 }
 
 template <typename T, unsigned int Dim, unsigned int BlockSize>
-void RHnCUDA<T, Dim, BlockSize>::Fill(const RVecD &coords)
+void RHnCUDA<T, Dim, BlockSize>::Fill(int numStream, const RVecD &coords)
 {
    RVecD weights(coords.size() / Dim, 1);
-   Fill(coords, weights);
+   Fill(numStream, coords, weights);
 }
 
 template <typename T, unsigned int Dim, unsigned int BlockSize>
-void RHnCUDA<T, Dim, BlockSize>::Fill(const RVecD &coords, const RVecD &weights)
+void RHnCUDA<T, Dim, BlockSize>::Fill(int numStream, const RVecD &coords, const RVecD &weights)
 {
    auto bulkSize = weights.size();
+   auto stream = fCtx.GetStream(numStream);
 
-   ERRCHECK(cudaMemcpy(fDCoords, coords.data(), Dim * bulkSize * sizeof(double), cudaMemcpyHostToDevice));
-   ERRCHECK(cudaMemcpy(fDWeights, weights.data(), bulkSize * sizeof(double), cudaMemcpyHostToDevice));
-   ERRCHECK(cudaMemset(fDMask, 1, bulkSize * sizeof(bool)));
+   cudaStreamSynchronize(stream); // TODO: remove need for synchronization
+   std::memcpy(fHCoords, coords.data(), Dim * bulkSize * sizeof(double));
+   std::memcpy(fHWeights, weights.data(), bulkSize * sizeof(double));
+   ERRCHECK(cudaMemcpyAsync(fDCoords, fHCoords, Dim * bulkSize * sizeof(double), cudaMemcpyHostToDevice, stream));
+   ERRCHECK(cudaMemcpyAsync(fDWeights, fHWeights, bulkSize * sizeof(double), cudaMemcpyHostToDevice, stream));
+   ERRCHECK(cudaMemsetAsync(fDMask, 1, bulkSize * sizeof(bool), stream));
 
    fEntries += bulkSize;
-   ExecuteCUDAHisto(bulkSize);
+   ExecuteCUDAHisto(stream, bulkSize);
 }
 
 unsigned int nextPow2(unsigned int x)
@@ -310,20 +313,20 @@ unsigned int nextPow2(unsigned int x)
 // each thread in that kernel can process a variable number of elements.
 ////////////////////////////////////////////////////////////////////////////////
 template <typename T, unsigned int Dim, unsigned int BlockSize>
-void RHnCUDA<T, Dim, BlockSize>::GetNumBlocksAndThreads(int n, int &blocks, int &threads)
+void RHnCUDA<T, Dim, BlockSize>::GetNumBlocksAndThreads(std::size_t n, int &blocks, int &threads)
 {
    // get device capability, to avoid block/grid size exceed the upper bound
    threads = (n < BlockSize * 2) ? nextPow2((n + 1) / 2) : BlockSize;
    blocks = (n + (threads * 2 - 1)) / (threads * 2);
 
-   if ((float)threads * blocks > (float)fProps->props.maxGridSize[0] * fProps->props.maxThreadsPerBlock) {
+   if ((float)threads * blocks > (float)fCtx.GetMaxBlockDimX() * fCtx.GetMaxThreadsPerBlock()) {
       printf("n is too large, please choose a smaller number!\n");
    }
 
-   if (blocks > fProps->props.maxGridSize[0]) {
+   if (blocks > fCtx.GetMaxBlockDimX()) {
       printf("Grid size <%d> exceeds the device capability <%d>, set block size as "
              "%d (original %d)\n",
-             blocks, fProps->props.maxGridSize[0], threads * 2, threads);
+             blocks, fCtx.GetMaxBlockDimX(), threads * 2, threads);
 
       blocks /= 2;
       threads *= 2;
@@ -333,9 +336,9 @@ void RHnCUDA<T, Dim, BlockSize>::GetNumBlocksAndThreads(int n, int &blocks, int 
 }
 
 template <typename T, unsigned int Dim, unsigned int BlockSize>
-void RHnCUDA<T, Dim, BlockSize>::GetStats(std::size_t size)
+void RHnCUDA<T, Dim, BlockSize>::GetStats(cudaStream_t &stream, std::size_t size)
 {
-   ExcludeUOverflowKernel<Dim, BlockSize><<<fmax(1, size / BlockSize), BlockSize>>>(fDMask, fDWeights, size);
+   ExcludeUOverflowKernel<Dim, BlockSize><<<fmax(1, size / BlockSize), BlockSize, 0, stream>>>(fDMask, fDWeights, size);
    ERRCHECK(cudaPeekAtLastError());
 
    // Number of blocks in grid is halved, because each thread loads two elements from global memory.
@@ -354,34 +357,31 @@ void RHnCUDA<T, Dim, BlockSize>::GetStats(std::size_t size)
 
    // OPTIMIZATION: interleave/change order of computation of different stats? or parallelize via
    // streams. Need to profile first.
-   // CUDAHelpers::PrintArray<<<1,1>>>(fDIntermediateStats, kMaxBlocks * kNStats);
-   // CUDAHelpers::PrintArray<<<1,1>>>(fDStats, kMaxBlocks * kNStats);
-   CUDAHelpers::TransformReduce(numBlocks, numThreads, size, resultArray, 0., overwrite, CUDAHelpers::Plus<double>(),
-                                CUDAHelpers::Identity{}, fDWeights);
+   CUDAHelpers::TransformReduce(stream, numBlocks, numThreads, size, resultArray, 0., overwrite,
+                                CUDAHelpers::Plus<double>(), CUDAHelpers::Identity{}, fDWeights);
    ERRCHECK(cudaPeekAtLastError());
-   CUDAHelpers::TransformReduce(numBlocks, numThreads, size, &resultArray[numBlocks], 0., overwrite,
+   CUDAHelpers::TransformReduce(stream, numBlocks, numThreads, size, &resultArray[numBlocks], 0., overwrite,
                                 CUDAHelpers::Plus<double>(), CUDAHelpers::Square{}, fDWeights);
    ERRCHECK(cudaPeekAtLastError());
 
-
    auto offset = 2 * numBlocks;
-   for (auto d = 0; d < Dim; d++) {
+   for (auto d = 0U; d < Dim; d++) {
       // Multiply weight with coordinate of current axis. E.g., for Dim = 2 this computes Tsumwx and Tsumwy
-      CUDAHelpers::TransformReduce(numBlocks, numThreads, size, &resultArray[offset], 0., overwrite,
+      CUDAHelpers::TransformReduce(stream, numBlocks, numThreads, size, &resultArray[offset], 0., overwrite,
                                    CUDAHelpers::Plus<double>(), CUDAHelpers::Mul{}, fDWeights, &fDCoords[d * size]);
       ERRCHECK(cudaPeekAtLastError());
       offset += numBlocks;
 
       // Squares coodinate per axis. E.g., for Dim = 2 this computes Tsumwx2 and Tsumwy2
-      CUDAHelpers::TransformReduce(numBlocks, numThreads, size, &resultArray[offset], 0., overwrite,
+      CUDAHelpers::TransformReduce(stream, numBlocks, numThreads, size, &resultArray[offset], 0., overwrite,
                                    CUDAHelpers::Plus<double>(), CUDAHelpers::MulSquare{}, fDWeights,
                                    &fDCoords[d * size]);
       ERRCHECK(cudaPeekAtLastError());
       offset += numBlocks;
 
-      for (auto prev_d = 0; prev_d < d; prev_d++) {
+      for (auto prev_d = 0U; prev_d < d; prev_d++) {
          // Multiplies coordinate of current axis with the "previous" axis. E.g., for Dim = 2 this computes Tsumwxy
-         CUDAHelpers::TransformReduce(numBlocks, numThreads, size, &resultArray[offset], 0., overwrite,
+         CUDAHelpers::TransformReduce(stream, numBlocks, numThreads, size, &resultArray[offset], 0., overwrite,
                                       CUDAHelpers::Plus<double>(), CUDAHelpers::Mul3{}, fDWeights,
                                       &fDCoords[prev_d * size], &fDCoords[d * size]);
          ERRCHECK(cudaPeekAtLastError());
@@ -403,45 +403,44 @@ void RHnCUDA<T, Dim, BlockSize>::GetStats(std::size_t size)
          overwrite = false;
       }
 
-      // ERRCHECK(cudaMemcpy(fDIntermediateStats, fDStats, s * kNStats * sizeof(double), cudaMemcpyDeviceToDevice));
-      for (auto i = 0; i < kNStats; i++) {
-         CUDAHelpers::TransformReduce(blocks, threads, s, &dest[i * next_s], 0., overwrite, CUDAHelpers::Plus<double>(),
-                                      CUDAHelpers::Identity{}, &fDIntermediateStats[i * s]);
+      ERRCHECK(cudaMemcpy(fDIntermediateStats, fDStats, s * kNStats * sizeof(double), cudaMemcpyDeviceToDevice));
+      for (auto i = 0U; i < kNStats; i++) {
+         CUDAHelpers::TransformReduce(stream, blocks, threads, s, &dest[i * next_s], 0., overwrite,
+                                      CUDAHelpers::Plus<double>(), CUDAHelpers::Identity{},
+                                      &fDIntermediateStats[i * s]);
          ERRCHECK(cudaPeekAtLastError());
       }
 
       s = next_s;
    }
-
-   // CUDAHelpers::PrintArray<<<1,1>>>(fDIntermediateStats, kMaxBlocks * kNStats);
-   // CUDAHelpers::PrintArray<<<1,1>>>(fDStats, kMaxBlocks * kNStats);
-   // cudaDeviceSynchronize();
-   // printf("\n\n");
 }
 
 template <typename T, unsigned int Dim, unsigned int BlockSize>
-void RHnCUDA<T, Dim, BlockSize>::ExecuteCUDAHisto(std::size_t size)
+void RHnCUDA<T, Dim, BlockSize>::ExecuteCUDAHisto(cudaStream_t &stream, std::size_t size)
 {
    int numBlocks = size % BlockSize == 0 ? size / BlockSize : size / BlockSize + 1;
 
-   if (fHistoSmemSize > fProps->props.sharedMemPerBlock) {
-      HistogramGlobal<T, Dim><<<numBlocks, BlockSize>>>(fDHistogram, fDBinEdges, fDBinEdgesIdx, fDNBinsAxis, fDMin,
-                                                        fDMax, fDCoords, fDWeights, fDMask, size);
+   if (fHistoSmemSize > fCtx.GetMaxSMem()) {
+      HistogramGlobal<T, Dim><<<numBlocks, BlockSize, 0, stream>>>(fDHistogram, fDBinEdges, fDBinEdgesIdx, fDNBinsAxis,
+                                                                   fDMin, fDMax, fDCoords, fDWeights, fDMask, size);
    } else {
-      HistogramLocal<T, Dim><<<numBlocks, BlockSize, fHistoSmemSize>>>(
+      HistogramLocal<T, Dim><<<numBlocks, BlockSize, fHistoSmemSize, stream>>>(
          fDHistogram, fDBinEdges, fDBinEdgesIdx, fDNBinsAxis, fDMin, fDMax, fDCoords, fDWeights, fDMask, fNBins, size);
    }
    ERRCHECK(cudaPeekAtLastError());
 
-   GetStats(size);
+   GetStats(stream, size);
 }
 
 template <typename T, unsigned int Dim, unsigned int BlockSize>
-void RHnCUDA<T, Dim, BlockSize>::RetrieveResults(T *histResult, double *statsResult)
+void RHnCUDA<T, Dim, BlockSize>::RetrieveResults(int numStream, T *histResult, double *statsResult)
 {
+   auto stream = fCtx.GetStream(numStream);
+
    // Copy back results from GPU to CPU.
-   ERRCHECK(cudaMemcpy(histResult, fDHistogram, fNBins * sizeof(T), cudaMemcpyDeviceToHost));
-   ERRCHECK(cudaMemcpy(statsResult, fDStats, kNStats * sizeof(double), cudaMemcpyDeviceToHost));
+   ERRCHECK(cudaMemcpyAsync(histResult, fDHistogram, fNBins * sizeof(T), cudaMemcpyDeviceToHost, stream));
+   ERRCHECK(cudaMemcpyAsync(statsResult, fDStats, kNStats * sizeof(double), cudaMemcpyDeviceToHost, stream));
+   cudaStreamSynchronize(stream);
 }
 
 #include "RHnCUDA-impl.cu"

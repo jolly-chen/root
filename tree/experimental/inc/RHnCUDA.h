@@ -3,8 +3,8 @@
 
 #include <vector>
 #include <array>
-#include "AxisDescriptor.h"
 #include "ROOT/RVec.hxx"
+#include "RCUDAContext.hxx"
 
 namespace ROOT {
 namespace Experimental {
@@ -25,6 +25,8 @@ private:
    double                           *fDBinEdges;          ///< Bin edges array for each axis
    int                              *fDBinEdgesIdx;       ///< Start index of the binedges in kBinEdges per axis
 
+   double                           *fHCoords;            ///<
+   double                           *fHWeights;           ///<
    double                           *fDCoords;            ///< Pointer to array of coordinates to fill on the GPU.
    double                           *fDWeights;           ///< Pointer to array of weights on the GPU.
    bool                             *fDMask;              ///< Pointer to array of bins (corresponding to the coordinates) to fill on the GPU.
@@ -33,50 +35,46 @@ private:
    double                           *fDIntermediateStats; ///< Buffer for storing intermediate results of stat reduction on GPU.
    double                           *fDStats;             ///< Pointer to statistics array on GPU.
 
-   // Kernel size parameters
-   unsigned int                      fNumBlocks;          ///< Number of blocks used in CUDA kernels
+   // Kernel parameters
    std::size_t                       fMaxBulkSize;        ///< Number of coordinates to buffer.
-   std::size_t                       kStatsSmemSize;      ///< Size of shared memory per block in GetStatsKernel
+   const std::size_t                 kStatsSmemSize;      ///< Size of shared memory per block in GetStatsKernel
    std::size_t                       fHistoSmemSize;      ///< Size of shared memory per block in HistoKernel
 
-   struct CUDAProps;
-   std::unique_ptr<CUDAProps>        fProps;
+   RCUDAContext                     &fCtx;
    // clang-format on
 
 public:
    RHnCUDA() = delete;
 
    // TODO: Change RHnCUDA to SOA for axes
-   RHnCUDA(std::size_t maxBulkSize, const std::size_t nBins, const std::array<int, Dim> &nBinsAxis,
-           const std::array<double, Dim> &xLow, const std::array<double, Dim> &xHigh,
-           const std::vector<double> &binEdges, const std::array<int, Dim> &binEdgesIdx);
+   RHnCUDA(std::size_t maxBulkSize, const std::size_t nBins,
+           const std::array<int, Dim> &nBinsAxis, const std::array<double, Dim> &xLow,
+           const std::array<double, Dim> &xHigh, const std::vector<double> &binEdges,
+           const std::array<int, Dim> &binEdgesIdx);
 
    ~RHnCUDA();
 
    RHnCUDA(const RHnCUDA &) = delete;
    RHnCUDA &operator=(const RHnCUDA &) = delete;
 
-   std::size_t GetEntries() {
-      // printf("entries: %lu \n", fEntries);
-      // printf("??????????????????\n");
-      return fEntries;
-   }
+   std::size_t GetEntries() { return fEntries; }
 
-   void RetrieveResults(T *histResult, double *statsResult);
+   void RetrieveResults(int numStream, T *histResult, double *statsResult);
 
-   void Fill(const RVecD &coords);
+   void Fill(int numStream, const RVecD &coords);
 
-   void Fill(const RVecD &coords, const RVecD &weights);
+   void Fill(int numStream, const RVecD &coords, const RVecD &weights);
 
    size_t GetMaxBulkSize() { return fMaxBulkSize; }
 
 protected:
+#ifdef __CUDACC__
+   void GetNumBlocksAndThreads(std::size_t n, int &blocks, int &threads);
 
-   void GetNumBlocksAndThreads(int n, int &blocks, int &threads);
+   void GetStats(cudaStream_t &stream, std::size_t size);
 
-   void GetStats(std::size_t size);
-
-   void ExecuteCUDAHisto(std::size_t size);
+   void ExecuteCUDAHisto(cudaStream_t &stream, std::size_t size);
+#endif
 };
 
 } // namespace Experimental

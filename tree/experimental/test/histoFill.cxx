@@ -295,11 +295,11 @@ TYPED_TEST(FillTestFixture, FillFixedBins)
    std::vector<int> expectedHistBins = {0, this->nCells / 2, this->nCells - 1};
 
    for (auto i = 0; i < (int)coords.size(); i++) {
-      h.Fill(coords[i]);
+      h.Fill(0, coords[i]);
       this->expectedHist[expectedHistBins[i]] = weight;
    }
 
-   h.RetrieveResults(this->result, this->stats);
+   h.RetrieveResults(0, this->result, this->stats);
 
    {
       SCOPED_TRACE("Check fill result");
@@ -329,11 +329,11 @@ TYPED_TEST(FillTestFixture, FillFixedBinsWeighted)
    std::vector<int> expectedHistBins = {0, this->nCells / 2, this->nCells - 1};
 
    for (auto i = 0; i < (int)coords.size(); i++) {
-      h.Fill(coords[i], weight);
+      h.Fill(0, coords[i], weight);
       this->expectedHist[expectedHistBins[i]] = (t)weight[0];
    }
 
-   h.RetrieveResults(this->result, this->stats);
+   h.RetrieveResults(0, this->result, this->stats);
 
    {
       SCOPED_TRACE("Check fill result");
@@ -350,19 +350,19 @@ TYPED_TEST(FillTestFixture, FillFixedBinsWeighted)
 TYPED_TEST(ClampTestFixture, FillIntClamp)
 {
    auto h = typename TestFixture::hist::template type<int, 1>(32768, 6, {6}, {0}, {4}, {}, {-1});
-   h.Fill({0}, {INT_MAX});
-   h.Fill({3}, {-INT_MAX});
+   h.Fill(0, {0}, {INT_MAX});
+   h.Fill(0, {3}, {-INT_MAX});
 
    for (int i = 0; i < 100; i++) {       // Repeat to test for race conditions
-      h.Fill({0});                       // Should keep max value
-      h.Fill({1}, {long(INT_MAX) + 1});  // Clamp positive overflow
-      h.Fill({2}, {-long(INT_MAX) - 1}); // Clamp negative overflow
-      h.Fill({3}, {-1});                 // Should keep min value
+      h.Fill(0, {0});                       // Should keep max value
+      h.Fill(0, {1}, {long(INT_MAX) + 1});  // Clamp positive overflow
+      h.Fill(0, {2}, {-long(INT_MAX) - 1}); // Clamp negative overflow
+      h.Fill(0, {3}, {-1});                 // Should keep min value
    }
 
    int result[6];
    double s[4];
-   h.RetrieveResults(result, s);
+   h.RetrieveResults(0, result, s);
 
    EXPECT_EQ(result[0], 0);
    EXPECT_EQ(result[1], INT_MAX);
@@ -379,20 +379,20 @@ TYPED_TEST(ClampTestFixture, FillShortClamp)
    // Filling short histograms is implemented using atomic operations on integers so we test each case
    // twice to test the for correct filling of the lower and upper bits.
    for (int offset = 0; offset < 2; offset++) {
-      h.Fill({0. + offset}, {32767});
-      h.Fill({2. + offset}, {-32767});
+      h.Fill(0, {0. + offset}, {32767});
+      h.Fill(0, {2. + offset}, {-32767});
 
       for (int i = 0; i < 100; i++) {     // Repeat to test for race conditions
-         h.Fill({0. + offset});           // Keep max value
-         h.Fill({2. + offset}, {-1});     // Keep min value
-         h.Fill({4. + offset}, {32769});  // Clamp positive overflow
-         h.Fill({6. + offset}, {-32769}); // Clamp negative overflow
+         h.Fill(0, {0. + offset});           // Keep max value
+         h.Fill(0, {2. + offset}, {-1});     // Keep min value
+         h.Fill(0, {4. + offset}, {32769});  // Clamp positive overflow
+         h.Fill(0, {6. + offset}, {-32769}); // Clamp negative overflow
       }
    }
 
    short result[10];
    double s[4];
-   h.RetrieveResults(result, s);
+   h.RetrieveResults(0, result, s);
 
    int expected[10] = {0, 32767, 32767, -32767, -32767, 32767, 32767, -32767, -32767, 0};
    CHECK_ARRAY(result, expected, 10);

@@ -4,7 +4,6 @@
 #include <array>
 #include <optional>
 #include <sycl/sycl.hpp>
-#include "AxisDescriptor.h"
 #include "ROOT/RVec.hxx"
 
 namespace ROOT {

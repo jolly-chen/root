@@ -39,8 +39,9 @@
 inline static void __checkCudaErrors(cudaError_t error, std::string func, std::string file, int line)
 {
    if (error != cudaSuccess) {
-      Fatal((func + "(), " + file + ":" + std::to_string(line)).c_str(), "%s", cudaGetErrorString(error));
-      throw std::bad_alloc();
+      std::stringstream errMsg;
+      errMsg << func << "(), " << file + ":" << std::to_string(line) << " : " << cudaGetErrorString(error);
+      throw std::runtime_error(errMsg.str());
    }
 }
 
@@ -248,7 +249,7 @@ __global__ void TransformReduceKernel(unsigned int n, TOut *out, TInit init, TOp
 }
 
 template <typename TOut, typename TOp, typename TInit, typename ROp, typename... TIn>
-void TransformReduce(std::size_t numBlocks, std::size_t blockSize, std::size_t n,
+void TransformReduce(cudaStream_t &stream, std::size_t numBlocks, std::size_t blockSize, std::size_t n,
                      TOut *out, TInit init, bool overwrite, ROp reduceOp, TOp transformOp, TIn ...in)
 {
    auto smemSize = ((blockSize / 32) + 1) * sizeof(double);
@@ -257,104 +258,104 @@ void TransformReduce(std::size_t numBlocks, std::size_t blockSize, std::size_t n
    if (nIsPow2) {
       if (overwrite) {
          if (blockSize == 1)
-            TransformReduceKernel<1, true, true><<<numBlocks, 1, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<1, true, true><<<numBlocks, 1, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 2)
-            TransformReduceKernel<2, true, true><<<numBlocks, 2, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<2, true, true><<<numBlocks, 2, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 4)
-            TransformReduceKernel<4, true, true><<<numBlocks, 4, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<4, true, true><<<numBlocks, 4, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 8)
-            TransformReduceKernel<8, true, true><<<numBlocks, 8, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<8, true, true><<<numBlocks, 8, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 16)
-            TransformReduceKernel<16, true, true><<<numBlocks, 16, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<16, true, true><<<numBlocks, 16, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 32)
-            TransformReduceKernel<32, true, true><<<numBlocks, 32, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<32, true, true><<<numBlocks, 32, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 64)
-            TransformReduceKernel<64, true, true><<<numBlocks, 64, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<64, true, true><<<numBlocks, 64, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 128)
-            TransformReduceKernel<128, true, true><<<numBlocks, 128, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<128, true, true><<<numBlocks, 128, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 256)
-            TransformReduceKernel<256, true, true><<<numBlocks, 256, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<256, true, true><<<numBlocks, 256, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 512)
-            TransformReduceKernel<512, true, true><<<numBlocks, 512, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<512, true, true><<<numBlocks, 512, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 1024)
-            TransformReduceKernel<1024, true, true><<<numBlocks, 1024, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<1024, true, true><<<numBlocks, 1024, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else
             Error("TransformReduce", "Unsupported block size: %lu", blockSize);
       } else {
          if (blockSize == 1)
-            TransformReduceKernel<1, true, false><<<numBlocks, 1, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<1, true, false><<<numBlocks, 1, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 2)
-            TransformReduceKernel<2, true, false><<<numBlocks, 2, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<2, true, false><<<numBlocks, 2, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 4)
-            TransformReduceKernel<4, true, false><<<numBlocks, 4, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<4, true, false><<<numBlocks, 4, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 8)
-            TransformReduceKernel<8, true, false><<<numBlocks, 8, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<8, true, false><<<numBlocks, 8, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 16)
-            TransformReduceKernel<16, true, false><<<numBlocks, 16, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<16, true, false><<<numBlocks, 16, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 32)
-            TransformReduceKernel<32, true, false><<<numBlocks, 32, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<32, true, false><<<numBlocks, 32, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 64)
-            TransformReduceKernel<64, true, false><<<numBlocks, 64, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<64, true, false><<<numBlocks, 64, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 128)
-            TransformReduceKernel<128, true, false><<<numBlocks, 128, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<128, true, false><<<numBlocks, 128, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 256)
-            TransformReduceKernel<256, true, false><<<numBlocks, 256, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<256, true, false><<<numBlocks, 256, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 512)
-            TransformReduceKernel<512, true, false><<<numBlocks, 512, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<512, true, false><<<numBlocks, 512, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 1024)
-            TransformReduceKernel<1024, true, false><<<numBlocks, 1024, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<1024, true, false><<<numBlocks, 1024, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else
             Error("TransformReduce", "Unsupported block size: %lu", blockSize);
       }
    } else {
       if (overwrite) {
          if (blockSize == 1)
-            TransformReduceKernel<1, false, true><<<numBlocks, 1, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<1, false, true><<<numBlocks, 1, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 2)
-            TransformReduceKernel<2, false, true><<<numBlocks, 2, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<2, false, true><<<numBlocks, 2, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 4)
-            TransformReduceKernel<4, false, true><<<numBlocks, 4, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<4, false, true><<<numBlocks, 4, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 8)
-            TransformReduceKernel<8, false, true><<<numBlocks, 8, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<8, false, true><<<numBlocks, 8, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 16)
-            TransformReduceKernel<16, false, true><<<numBlocks, 16, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<16, false, true><<<numBlocks, 16, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 32)
-            TransformReduceKernel<32, false, true><<<numBlocks, 32, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<32, false, true><<<numBlocks, 32, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 64)
-            TransformReduceKernel<64, false, true><<<numBlocks, 64, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<64, false, true><<<numBlocks, 64, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 128)
-            TransformReduceKernel<128, false, true><<<numBlocks, 128, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<128, false, true><<<numBlocks, 128, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 256)
-            TransformReduceKernel<256, false, true><<<numBlocks, 256, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<256, false, true><<<numBlocks, 256, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 512)
-            TransformReduceKernel<512, false, true><<<numBlocks, 512, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<512, false, true><<<numBlocks, 512, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 1024)
-            TransformReduceKernel<1024, false, true><<<numBlocks, 1024, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<1024, false, true><<<numBlocks, 1024, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else
             Error("TransformReduce", "Unsupported block size: %lu", blockSize);
       } else {
          if (blockSize == 1)
-            TransformReduceKernel<1, false, false><<<numBlocks, 1, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<1, false, false><<<numBlocks, 1, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 2)
-            TransformReduceKernel<2, false, false><<<numBlocks, 2, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<2, false, false><<<numBlocks, 2, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 4)
-            TransformReduceKernel<4, false, false><<<numBlocks, 4, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<4, false, false><<<numBlocks, 4, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 8)
-            TransformReduceKernel<8, false, false><<<numBlocks, 8, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<8, false, false><<<numBlocks, 8, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 16)
-            TransformReduceKernel<16, false, false><<<numBlocks, 16, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<16, false, false><<<numBlocks, 16, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 32)
-            TransformReduceKernel<32, false, false><<<numBlocks, 32, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<32, false, false><<<numBlocks, 32, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 64)
-            TransformReduceKernel<64, false, false><<<numBlocks, 64, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<64, false, false><<<numBlocks, 64, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 128)
-            TransformReduceKernel<128, false, false><<<numBlocks, 128, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<128, false, false><<<numBlocks, 128, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 256)
-            TransformReduceKernel<256, false, false><<<numBlocks, 256, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<256, false, false><<<numBlocks, 256, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 512)
-            TransformReduceKernel<512, false, false><<<numBlocks, 512, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<512, false, false><<<numBlocks, 512, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else if (blockSize == 1024)
-            TransformReduceKernel<1024, false, false><<<numBlocks, 1024, smemSize>>>(n, out, init, transformOp, reduceOp, in...);
+            TransformReduceKernel<1024, false, false><<<numBlocks, 1024, smemSize, stream>>>(n, out, init, transformOp, reduceOp, in...);
          else
             Error("TransformReduce", "Unsupported block size: %lu", blockSize);
       }
