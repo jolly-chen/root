@@ -55,9 +55,9 @@
 #include "TH1Merger.h"
 
 #include <chrono>
-#define TIME_FILL
-#define TIME_STATS
-#define TIME_FINDBIN
+// #define TIME_FILL
+// #define TIME_STATS
+// #define TIME_FINDBIN
 using Clock = std::chrono::steady_clock;
 using fsecs = std::chrono::duration<double, std::chrono::seconds::period>;
 // #include <likwid-marker.h>
@@ -612,11 +612,9 @@ ClassImp(TH1);
 
 void TH1::init_timingstuff()
 {
-#if defined(TIME_FINDBIN) || defined(TIME_FILL) || defined(TIME_STATS)
    tusb = 0;
    tfill = 0;
    tfindbin = 0;
-#endif
 }
 
 TH1::TH1(): TNamed(), TAttLine(), TAttFill(), TAttMarker()
