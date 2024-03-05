@@ -154,7 +154,7 @@ public:
    {
       if constexpr (kUseBulkAPI) {
          const auto eventMask = ROOT::RDF::Experimental::REventMask(mask, bulkSize);
-         fHelpers[varIdx].Exec(eventMask, ROOT::RVec<ColTypes>(static_cast<ColTypes *>(fValuePtrs[slot][varIdx][S]), bulkSize)...);
+         fHelpers[varIdx].Exec(slot, eventMask, ROOT::RVec<ColTypes>(static_cast<ColTypes *>(fValuePtrs[slot][varIdx][S]), bulkSize)...);
       } else {
          for (std::size_t i = 0ul; i < bulkSize; ++i)
             if (mask[i])

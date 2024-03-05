@@ -268,7 +268,7 @@ public:
       fCUDAHist = std::make_unique<CUDAHist_t>(maxBulkSize, numBins, ncells, xlow, xHigh, binEdges, binEdgesIdx);
    }
 
-   CUDAFillHelper(const std::shared_ptr<HIST> &h, std::size_t maxBulkSize) : fStream(0)
+   CUDAFillHelper(const std::shared_ptr<HIST> &h, std::size_t maxBulkSize, const unsigned int nSlots) : fStream(0)
    {
       // We ignore nSlots and just create one CUDAHist instance that handles the parallelization.
       fObject = h.get();
@@ -280,7 +280,7 @@ public:
    // Bulk overload
    // TODO: Fill with containers
    template <typename... ValTypes>
-   auto Exec(const ROOT::RDF::Experimental::REventMask &m, const ValTypes &...x)
+   auto Exec(unsigned int slot, const ROOT::RDF::Experimental::REventMask &m, const ValTypes &...x)
    {
       if constexpr (std::conjunction_v<std::is_same<ValTypes, RVecD>...>) {
          Fill(m, std::index_sequence_for<ValTypes...>{}, x...);
@@ -296,14 +296,14 @@ public:
 
    // no container arguments
    template <typename... ValTypes, std::enable_if_t<!Disjunction<IsDataContainer<ValTypes>...>::value, int> = 0>
-   auto Exec(const ValTypes &...x) -> decltype(fObject->Fill(x...), void())
+   auto Exec(unsigned int slot, const ValTypes &...x) -> decltype(fObject->Fill(x...), void())
    {
       fObject->Fill(x...);
    }
 
    // at least one container argument
    template <typename... Xs, std::enable_if_t<Disjunction<IsDataContainer<Xs>...>::value, int> = 0>
-   auto Exec(const Xs &...xs) -> decltype(fObject->Fill(*MakeBegin(xs)...), void())
+   auto Exec(unsigned int slot, const Xs &...xs) -> decltype(fObject->Fill(*MakeBegin(xs)...), void())
    {
       // array of bools keeping track of which inputs are containers
       constexpr std::array<bool, sizeof...(Xs)> isContainer{IsDataContainer<Xs>::value...};
@@ -406,7 +406,7 @@ public:
       auto &result = *static_cast<std::shared_ptr<H> *>(newResult);
       ResetIfPossible(result.get());
       UnsetDirectoryIfPossible(result.get());
-      return CUDAFillHelper(result, fCUDAHist->GetMaxBulkSize());
+      return CUDAFillHelper(result, fCUDAHist->GetMaxBulkSize(), 1);
    }
 };
 

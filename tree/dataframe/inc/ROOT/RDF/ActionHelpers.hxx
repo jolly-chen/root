@@ -480,7 +480,7 @@ public:
    }
 
    template <std::size_t... Is, typename... ValTypes>
-   void BulkFill(const ROOT::RDF::Experimental::REventMask &m, std::index_sequence<Is...>, const ValTypes &...x)
+   void BulkFill(unsigned int slot, const ROOT::RDF::Experimental::REventMask &m, std::index_sequence<Is...>, const ValTypes &...x)
    {
       // TODO: different types in ValTypes?
       std::array<std::vector<double>, sizeof...(ValTypes)> filtered;
@@ -494,23 +494,23 @@ public:
 
       // If the pack does not contain weights, pass a nullptr
       if constexpr (sizeof...(ValTypes) == 2)
-         fObjects[0]->FillN(int(filtered[0].size()), filtered[Is].data()...);
+         fObjects[slot]->FillN(int(filtered[0].size()), filtered[Is].data()...);
       else
-         fObjects[0]->FillN(int(filtered[0].size()), filtered[Is].data()..., static_cast<double *>(nullptr));
+         fObjects[slot]->FillN(int(filtered[0].size()), filtered[Is].data()..., static_cast<double *>(nullptr));
    }
 
    // Bulk overload
    template <typename... ValTypes>
-   auto Exec(const ROOT::RDF::Experimental::REventMask &m, const ValTypes &...x)
+   auto Exec(unsigned int slot, const ROOT::RDF::Experimental::REventMask &m, const ValTypes &...x)
    {
       // If all arguments are doubles and only for TH1D for now
       if constexpr (std::conjunction_v<std::is_same<RVecD, ValTypes>...> && std::is_same_v<TH1D, HIST>) {
-         BulkFill(m, std::index_sequence_for<ValTypes...>{}, x...);
+         BulkFill(slot, m, std::index_sequence_for<ValTypes...>{}, x...);
       } else {
          // Non-bulk fall-back
          for (std::size_t i = 0ul; i < m.Size(); ++i) {
             if (m[i]) {
-               Exec(0, (x[i])...);
+               Exec(slot, (x[i])...);
             }
          }
       }

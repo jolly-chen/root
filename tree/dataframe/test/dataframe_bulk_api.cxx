@@ -77,7 +77,7 @@ struct BulkHelper : ROOT::Detail::RDF::RActionImpl<BulkHelper> {
 
    std::shared_ptr<int> GetResultPtr() const { return x; }
 
-   void Exec(const REventMask &m, const ROOT::RVecULL &es)
+   void Exec(unsigned int slot, const REventMask &m, const ROOT::RVecULL &es)
    {
       EXPECT_EQ(m.FirstEntry(), 0ull);
       EXPECT_EQ(m.Size(), 10ull);
