@@ -247,11 +247,11 @@ namespace Cpp {
   }
 
   // See TClingClassInfo::IsLoaded
-  bool IsComplete(TCppScope_t scope) {
+  bool IsComplete(TCppConstScope_t scope) {
     if (!scope)
       return false;
 
-    Decl *D = static_cast<Decl*>(scope);
+    auto *D = static_cast<const Decl*>(scope);
 
     if (isa<ClassTemplateSpecializationDecl>(D)) {
       QualType QT = QualType::getFromOpaquePtr(GetTypeFromScope(scope));
@@ -272,12 +272,12 @@ namespace Cpp {
     return true;
   }
 
-  size_t SizeOf(TCppScope_t scope) {
+  size_t SizeOf(TCppConstScope_t scope) {
     assert (scope);
     if (!IsComplete(scope))
       return 0;
 
-    if (auto *RD = dyn_cast<RecordDecl>(static_cast<Decl*>(scope))) {
+    if (auto *RD = dyn_cast<RecordDecl>(static_cast<const Decl*>(scope))) {
       ASTContext &Context = RD->getASTContext();
       const ASTRecordLayout &Layout = Context.getASTRecordLayout(RD);
       return Layout.getSize().getQuantity();
@@ -304,7 +304,7 @@ namespace Cpp {
     return llvm::isa_and_nonnull<clang::ClassTemplateSpecializationDecl>(D);
   }
 
-  bool IsTypedefed(TCppScope_t handle) {
+  bool IsTypedefed(TCppConstScope_t handle) {
     auto *D = (clang::Decl *)handle;
     return llvm::isa_and_nonnull<clang::TypedefNameDecl>(D);
   }
@@ -591,10 +591,10 @@ namespace Cpp {
     return D;
   }
 
-  TCppScope_t GetUnderlyingScope(TCppScope_t scope) {
+  TCppScope_t GetUnderlyingScope(TCppConstScope_t scope) {
     if (!scope)
       return 0;
-    return GetUnderlyingScope((clang::Decl *) scope);
+    return GetUnderlyingScope((const clang::Decl *) scope);
   }
 
   TCppScope_t GetScope(const std::string &name, TCppScope_t parent)
@@ -1573,7 +1573,7 @@ namespace Cpp {
     return QT.getNonReferenceType().getAsOpaquePtr();
   }
 
-  TCppType_t GetUnderlyingType(TCppType_t type)
+  TCppType_t GetUnderlyingType(TCppConstType_t type)
   {
     QualType QT = QualType::getFromOpaquePtr(type);
     QT = QT->getCanonicalTypeUnqualified();
@@ -1690,7 +1690,7 @@ namespace Cpp {
     return getASTContext().getComplexType(QT).getAsOpaquePtr();
   }
 
-  TCppType_t GetTypeFromScope(TCppScope_t klass) {
+  TCppType_t GetTypeFromScope(TCppConstScope_t klass) {
     if (!klass)
       return 0;
 

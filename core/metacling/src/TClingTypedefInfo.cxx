@@ -29,6 +29,7 @@ compiler, not CINT.
 
 #include "cling/Interpreter/LookupHelper.h"
 #include "cling/Utils/AST.h"
+#include "clang/Interpreter/CppInterOp.h"
 #include "clang/AST/Attr.h"
 
 using namespace clang;
@@ -198,31 +199,12 @@ int TClingTypedefInfo::Size() const
    if (!IsValid()) {
       return 1;
    }
-   clang::ASTContext &context = fDecl->getASTContext();
-   const clang::TypedefNameDecl *td = llvm::dyn_cast<clang::TypedefNameDecl>(fDecl);
-   if (!td)
-      return 0; // should never happens
-   clang::QualType qt = td->getUnderlyingType();
-   if (qt->isDependentType()) {
-      // The underlying type is dependent on a template parameter,
-      // we have no idea what it is yet.
-      return 0;
-   }
-   if (const clang::RecordType *rt = qt->getAs<clang::RecordType>()) {
-      if (!rt->getDecl()->getDefinition()) {
-         // This is a typedef to a forward-declared type.
-         return 0;
-      }
+
+   if (!Cpp::IsTypedefed(fDecl)) {
+      return 1;
    }
 
-   // Deserialization might happen during the size calculation.
-   cling::Interpreter::PushTransactionRAII pushedT(fInterp);
-
-   // Note: This is an int64_t.
-   clang::CharUnits::QuantityType quantity =
-      context.getTypeSizeInChars(qt).getQuantity();
-   // Truncate cast to fit the CINT interface.
-   return static_cast<int>(quantity);
+   return Cpp::SizeOf(Cpp::GetUnderlyingScope(fDecl));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -30,7 +30,9 @@
 namespace Cpp {
   using TCppIndex_t = size_t;
   using TCppScope_t = void*;
+  using TCppConstScope_t = const void*;
   using TCppType_t = void*;
+  using TCppConstType_t = const void*;
   using TCppFunction_t = void*;
   using TCppConstFunction_t = const void*;
   using TCppFuncAddr_t = void*;
@@ -223,11 +225,11 @@ namespace Cpp {
   // See TClingClassInfo::IsLoaded
   /// Checks if the class definition is present, or not. Performs a
   /// template instantiation if necessary.
-  CPPINTEROP_API bool IsComplete(TCppScope_t scope);
+  CPPINTEROP_API bool IsComplete(TCppConstScope_t scope);
 
-  CPPINTEROP_API size_t SizeOf(TCppScope_t scope);
+  CPPINTEROP_API size_t SizeOf(TCppConstScope_t scope);
 
-  /// Checks if it is a "built-in" or a "complex" type.
+  /// Checks if it is a "built-in" or a "complex" type.S
   CPPINTEROP_API bool IsBuiltin(TCppType_t type);
 
   /// Checks if it is a templated class.
@@ -237,7 +239,7 @@ namespace Cpp {
   CPPINTEROP_API bool IsTemplateSpecialization(TCppScope_t handle);
 
   /// Checks if \c handle introduces a typedef name via \c typedef or \c using.
-  CPPINTEROP_API bool IsTypedefed(TCppScope_t handle);
+  CPPINTEROP_API bool IsTypedefed(TCppConstScope_t handle);
 
   CPPINTEROP_API bool IsAbstract(TCppType_t klass);
 
@@ -311,7 +313,7 @@ namespace Cpp {
 
   /// Strips the typedef and returns the underlying class, and if the
   /// underlying decl is not a class it returns the input unchanged.
-  CPPINTEROP_API TCppScope_t GetUnderlyingScope(TCppScope_t scope);
+  CPPINTEROP_API TCppScope_t GetUnderlyingScope(TCppConstScope_t scope);
 
   /// Gets the namespace or class (by stripping typedefs) for the name 
   /// passed as a parameter, and if the parent is not passed, 
@@ -520,7 +522,7 @@ namespace Cpp {
   CPPINTEROP_API TCppType_t GetNonReferenceType(TCppType_t type);
 
   /// Gets the pure, Underlying Type (as opposed to the Using Type).
-  CPPINTEROP_API TCppType_t GetUnderlyingType(TCppType_t type);
+  CPPINTEROP_API TCppType_t GetUnderlyingType(TCppConstType_t type);
 
   /// Gets the Type (passed as a parameter) as a String value.
   CPPINTEROP_API std::string GetTypeAsString(TCppType_t type);
@@ -539,7 +541,7 @@ namespace Cpp {
 
   /// This will convert a class into its type, so for example, you can
   /// use it to declare variables in it.
-  CPPINTEROP_API TCppType_t GetTypeFromScope(TCppScope_t klass);
+  CPPINTEROP_API TCppType_t GetTypeFromScope(TCppConstScope_t klass);
 
   /// Checks if a C++ type derives from another.
   CPPINTEROP_API bool IsTypeDerivedFrom(TCppType_t derived, TCppType_t base);
